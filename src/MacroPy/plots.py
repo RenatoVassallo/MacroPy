@@ -1,0 +1,287 @@
+import numpy as np
+import pandas as pd
+import math
+from plotnine import *
+from mizani.breaks import breaks_date
+import warnings
+warnings.filterwarnings("ignore")
+
+def generate_series_plot(yy, yy_dates=None, yy_names=None, series_titles=None, title=None, 
+                         color_scheme=1, n_breaks: int = 10, zero_line: bool = False):
+    """
+    Generate time series plots using plotnine (ggplot-style).
+    
+    Parameters:
+        yy (array-like or DataFrame): Time series data (variables in columns).
+        yy_dates (list or pd.DatetimeIndex): Dates for the time series.
+        yy_names (list): List of variable names (column names) if `yy` is array-like.
+        series_titles (list): Optional custom names for each variable (replacing yy_names).
+        title (str): Plot title.
+        color_scheme (int): Color scheme option (1–4).
+        n_breaks (int): Number of x-axis breaks (year ticks).
+        zero_line (bool): Whether to include a horizontal zero line.
+    
+    Returns:
+        plotnine.ggplot object
+    """
+    # Define conservative color schemes
+    color_schemes = {
+        1: "#1f77b4",  # Dark Blue
+        2: "#c44e52",  # Soft Red
+        3: "#55a868",  # Muted Green
+        4: "#8172b3"   # Soft Purple
+    }
+    line_color = color_schemes.get(color_scheme, "#1f77b4")
+
+    # Handle input types
+    if isinstance(yy, pd.DataFrame):
+        df = yy.copy()
+        if yy_dates is not None:
+            df.index = pd.to_datetime(yy_dates)
+        yy_names = list(df.columns)
+    else:
+        df = pd.DataFrame(yy, index=pd.to_datetime(yy_dates), columns=yy_names)
+
+    # Reshape to long format
+    df = df.rename_axis("index").reset_index().melt(id_vars='index', var_name='Variable', value_name='Value')
+
+    # Preserve variable order
+    df['Variable'] = pd.Categorical(df['Variable'], categories=yy_names, ordered=True)
+
+    # Replace with custom titles if provided
+    if series_titles:
+        title_dict = dict(zip(yy_names, series_titles))
+        df['Variable'] = df['Variable'].map(title_dict)
+        df['Variable'] = pd.Categorical(df['Variable'], categories=series_titles, ordered=True)
+
+    num_vars = len(df['Variable'].unique())
+    num_rows = int(np.ceil(num_vars / 2))
+
+    # Build base plot
+    plot = (
+        ggplot(df, aes(x='index', y='Value')) +
+        geom_line(color=line_color, size=1.2) +
+        facet_wrap('~Variable', ncol=2, scales='free') +
+        scale_x_datetime(date_labels="%y", breaks=breaks_date(n=n_breaks)) +
+        labs(title=title, x="", y="") +
+        theme(
+            figure_size=(10, num_rows * 3),
+            plot_title=element_text(size=14, face="bold") if title else element_blank(),
+            panel_background=element_rect(fill="white", color="white"),
+            plot_background=element_rect(fill="white", color="white"),
+            strip_background=element_rect(fill="white", color="white"),
+            panel_grid_major=element_line(color="grey", linetype="dashed", size=0.8, alpha=0.2),
+            panel_grid_minor=element_blank(),
+            strip_text=element_text(size=12, weight='bold'),
+            axis_text_x=element_text(hjust=1, margin={'t': 5}),
+            axis_line_x=element_line(color="black", size=1),
+            axis_line_y=element_line(color="black", size=1),
+            legend_position="none"
+        )
+    )
+
+    # Optionally add zero line
+    if zero_line:
+        plot += geom_hline(yintercept=0, linetype='dashed', color='black')
+
+    return plot
+
+
+def generate_coeff_plot(self):
+    """
+    Plot posterior distributions for constants and VAR coefficients.
+    - Constants: Single grid plot
+    - VAR Coefficients: One plot per lag
+    """
+    if not hasattr(self, 'beta_draws') or len(self.beta_draws) == 0:
+        raise ValueError("Posterior draws for beta coefficients are not available.")
+
+    beta_array = np.array(self.beta_draws)  # shape: (n_draws, n_total_coeffs)
+    num_draws, num_coeffs = beta_array.shape
+
+    labels = []
+    equations = []
+    lags_list = []
+
+    for i in range(self.n_endo):  # equation index
+        if self.constant:
+            labels.append(f"Constant {i+1}")
+            lags_list.append(0)
+        for lag in range(1, self.lags + 1):
+            for j in range(self.n_endo):
+                labels.append(f"b_{i+1},{j+1} (lag {lag})")
+                lags_list.append(lag)
+        equations.extend([self.names[i]] * self.ncoeff_eq)
+
+    if len(labels) != num_coeffs:
+        raise ValueError("Mismatch between beta_draws and generated labels.")
+
+    df = pd.DataFrame(beta_array, columns=labels)
+    df = df.melt(var_name="Coefficient", value_name="Value")
+    df["Equation"] = np.repeat(equations, num_draws)
+    df["Lag"] = np.repeat(lags_list, num_draws)
+
+    # Split constants and VAR coefficients
+    df_const = df[df["Lag"] == 0]
+    df_var = df[df["Lag"] > 0]
+
+    # ------------------------------
+    # Constants Plot
+    # ------------------------------
+    medians_const = df_const.groupby("Coefficient")["Value"].median().reset_index()
+    medians_const["label"] = medians_const["Value"].round(2).astype(str)
+
+    n_const = df_const["Coefficient"].nunique()
+    ncol_const = min(4, n_const)
+    nrow_const = math.ceil(n_const / ncol_const)
+
+    const_plot = (
+        ggplot(df_const, aes(x='Value')) +
+        geom_density(fill='green', alpha=0.4) +
+        geom_vline(data=medians_const, mapping=aes(xintercept='Value'), linetype='dashed', color='red') +
+        geom_text(data=medians_const, mapping=aes(x='Value', y=0, label='label'),
+                  color='red', va='bottom', ha='left', nudge_y=0.01, size=10) +
+        facet_wrap('~Coefficient', nrow=nrow_const, ncol=ncol_const, scales='free') +
+        labs(title="Posterior Distributions of Constants") +
+        theme(
+            figure_size=(ncol_const * 4, nrow_const * 3),
+            panel_background=element_rect(fill="white"),
+            plot_background=element_rect(fill="white"),
+            strip_background=element_rect(fill="white"),
+            panel_grid_major=element_line(color="grey", linetype="dashed", size=0.5),
+            panel_grid_minor=element_blank(),
+            strip_text=element_text(size=10),
+            axis_line_x=element_line(color="black", size=1),
+            axis_line_y=element_line(color="black", size=1),
+            legend_position="none"
+        )
+    )
+
+    # ------------------------------
+    # VAR Coefficient Plots by Lag
+    # ------------------------------
+    var_plots = []
+    for lag in range(1, self.lags + 1):
+        df_lag = df_var[df_var["Lag"] == lag].copy()
+
+        # Create unique facet label per coefficient → equation
+        df_lag["facet_id"] = df_lag["Coefficient"] + " → " + df_lag["Equation"]
+
+        medians_lag = df_lag.groupby("facet_id")["Value"].median().reset_index()
+        medians_lag["label"] = medians_lag["Value"].round(2).astype(str)
+
+        var_plot = (
+            ggplot(df_lag, aes(x='Value')) +
+            geom_density(fill='blue', alpha=0.4) +
+            geom_vline(data=medians_lag, mapping=aes(xintercept='Value'), linetype='dashed', color='red') +
+            geom_text(data=medians_lag, mapping=aes(x='Value', y=0, label='label'),
+                      color='red', va='bottom', ha='left', nudge_y=0.01, size=10) +
+            facet_wrap('~facet_id', nrow=self.n_endo, ncol=self.n_endo, scales='free') +
+            labs(title=f"Posterior Distributions of VAR Coefficients (Lag {lag})") +
+            theme(
+                figure_size=(self.n_endo * 4, self.n_endo * 2.5),
+                panel_background=element_rect(fill="white"),
+                plot_background=element_rect(fill="white"),
+                strip_background=element_rect(fill="white"),
+                panel_grid_major=element_line(color="grey", linetype="dashed", size=0.5),
+                panel_grid_minor=element_blank(),
+                strip_text=element_text(size=9),
+                axis_line_x=element_line(color="black", size=1),
+                axis_line_y=element_line(color="black", size=1),
+                legend_position="none"
+            )
+        )
+
+        var_plots.append(var_plot)
+
+    return const_plot, var_plots
+
+
+
+def generate_irf_plots(self, cred_interval: list = [0.68, 0.95]):
+    """
+    Generate one IRF plot per shock. Each plot shows responses of all variables.
+    Supports customizable credible intervals and correct subplot order.
+    """
+    # Validate and convert credible interval(s)
+    if isinstance(cred_interval, (float, int)):
+        cred_intervals = [cred_interval]
+    else:
+        cred_intervals = list(cred_interval)
+
+    irf_array = np.array(self.ir_draws)  # shape: (draws, hor, var, shock)
+    H, N = self.hor, self.n_endo
+    ir_plots = []
+
+    # Label for type of shock
+    shock_type_label = "unit" if self.irf_1std == 0 else "1 s.d."
+
+    for shock in range(N):
+        # Collect responses to this shock
+        data_list = []
+
+        for var_idx, var_name in enumerate(self.names):
+            responses = irf_array[:, :, var_idx, shock]  # shape: (draws, hor)
+            for t in range(H):
+                row = {
+                    "Horizon": t,
+                    "Variable": var_name,
+                    "Median": np.percentile(responses[:, t], 50),
+                }
+                for ci in cred_intervals:
+                    lower_p = 50 - ci * 50
+                    upper_p = 50 + ci * 50
+                    lower_val, upper_val = np.percentile(responses[:, t], [lower_p, upper_p])
+                    row[f"Lower{int(ci*100)}"] = lower_val
+                    row[f"Upper{int(ci*100)}"] = upper_val
+
+                data_list.append(row)
+
+        df = pd.DataFrame(data_list)
+        df["Variable"] = pd.Categorical(df["Variable"], categories=self.names, ordered=True)
+
+        # Layout
+        ncols = min(2, N)
+        nrows = math.ceil(N / ncols)
+
+        # Build plot
+        p = (
+            ggplot(df, aes(x="Horizon", y="Median")) +
+            geom_hline(yintercept=0, linetype="dashed", color="black") +
+            facet_wrap("~Variable", ncol=ncols, scales="free") +
+            labs(
+                title=f"Impulse Responses to a {shock_type_label} shock in {self.names[shock]}",
+                y="Response",
+                x="Horizon"
+            ) +
+            theme(
+                figure_size=(ncols * 5, nrows * 3),
+                strip_text=element_text(size=12, weight='bold'),
+                axis_text=element_text(size=10),
+                axis_title=element_text(size=11),
+                panel_background=element_rect(fill="white"),
+                plot_background=element_rect(fill="white"),
+                panel_grid_major=element_line(color="grey", linetype="dashed", size=0.3),
+                panel_grid_minor=element_line(color="lightgrey", size=0.1),
+            )
+        )
+
+        # Add credible intervals
+        hist_color = "#8AB2D4"
+        for ci in sorted(cred_intervals, reverse=True):  # Draw wider intervals first
+            p += geom_ribbon(
+                aes(
+                    ymin=f"Lower{int(ci*100)}",
+                    ymax=f"Upper{int(ci*100)}"
+                ),
+                alpha=0.4 if ci < 0.9 else 0.2,
+                fill=hist_color
+            )
+
+        # Add median line
+        p += geom_line(color="black", size=1.2)
+
+        ir_plots.append(p)
+
+    return ir_plots
+

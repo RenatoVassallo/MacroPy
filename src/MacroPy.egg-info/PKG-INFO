@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: MacroPy
+Version: 0.1.0
+Summary: MacroPy Toolbox for Bayesian Macroeconometric Analysis in Python
+Author-email: Renato Vassallo <renato.vassallo@bse.eu>
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy==2.2.3
+Requires-Dist: pandas==2.2.3
+Requires-Dist: ipykernel==6.29.5
+Requires-Dist: scipy==1.15.2
+Requires-Dist: plotnine==0.14.5
+Requires-Dist: openpyxl==3.1.5
+Requires-Dist: tqdm==4.67.1
+Requires-Dist: requests==2.32.3
+Requires-Dist: fredapi==0.5.2
+Requires-Dist: lxml==5.3.1
+Requires-Dist: xlsxwriter==3.2.2
+Requires-Dist: wbdata>=1.0.0
+Requires-Dist: python-dotenv
+
+# MacroPy
+A Bayesian Toolbox for Macroeconometrics in Python

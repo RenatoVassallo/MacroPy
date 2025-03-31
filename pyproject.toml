@@ -1,0 +1,30 @@
+[project]
+name = "MacroPy"
+version = "0.1.0"
+description = "MacroPy Toolbox for Bayesian Macroeconometric Analysis in Python"
+authors = [{ name = "Renato Vassallo", email = "renato.vassallo@bse.eu" }]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==2.2.3",
+    "pandas==2.2.3",
+    "ipykernel==6.29.5",
+    "scipy==1.15.2",
+    "plotnine==0.14.5",
+    "openpyxl==3.1.5",
+    "tqdm==4.67.1",
+    "requests==2.32.3",
+    "fredapi==0.5.2",
+    "lxml==5.3.1",
+    "xlsxwriter==3.2.2",
+    "wbdata>=1.0.0",
+    "python-dotenv"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+# Include all CSV files inside MacroPy/datasets
+MacroPy = ["datasets/*.csv"]
