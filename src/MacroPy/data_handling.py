@@ -26,11 +26,11 @@ def prepare_data(YY, lags, constant=True, timetrend=False):
     for i in range(1, lags + 1):
         XXact[:, (i - 1) * nv:i * nv] = YY[T0 - i:T0 + nobs - i, :]
     
-    if timetrend:
-        XXact = np.hstack((np.arange(1, nobs + 1).reshape(-1, 1), XXact))
-        
     if constant:
-        XXact = np.hstack((np.ones((nobs, 1)), XXact))
+        XXact = np.hstack((XXact, np.ones((nobs, 1))))
+    
+    if timetrend:
+        XXact = np.hstack((XXact, np.arange(1, nobs + 1).reshape(-1, 1)))
     
     return YYact, XXact
 
