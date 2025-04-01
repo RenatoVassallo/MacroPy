@@ -5,7 +5,7 @@ from IPython.display import display
 from numpy.linalg import inv, eigvals
 from numpy.random import multivariate_normal
 from .data_handling import prepare_data, estimate_ols
-from .plots import generate_series_plot, generate_irf_plots, generate_fevd_plot
+from .plots import generate_series_plot, generate_irf_plots, generate_fevd_plot, generate_hd_plot
 from .summary import generate_summary
 
 class ClassicVAR:
@@ -222,6 +222,98 @@ class ClassicVAR:
             display(fevd_plot)
 
         return self.fevd
+    
+    
+    def compute_hd(self, plot_hd: bool = True, series_titles: list = None,
+                    shock_titles: list = None, title: str = None):
+        """
+        Compute the Historical Decomposition (HD) for the VAR model.
+        """
+        N, P = self.n_endo, self.lags
+        T = self.yy.shape[0]
+        Sigma = self.Sigma_ols
+        B = self.reshape_beta(self.b_ols, self.ncoeff_eq, N)
+        Bcomp = self.build_companion_matrix(B, N, P, self.n_exo)
+        X = self.XX
+        const_cols = int(self.constant) + int(self.timetrend)
+
+        # Get residuals and structural impact matrix
+        resid = self.yy - self.XX @ B
+        try:
+            S = np.linalg.cholesky(Sigma)
+        except np.linalg.LinAlgError:
+            raise ValueError("Sigma_ols is not positive definite")
+        
+        eps = np.linalg.solve(S, resid.T)  # Structural shocks
+
+        nlagX = N * P
+        B_big = np.zeros((nlagX, N))
+        B_big[:N, :] = S
+
+        Icomp = np.hstack((np.eye(N), np.zeros((N, nlagX - N))))  # (N, N*P)
+
+        # === SHOCK COMPONENTS ===
+        HDshock_big = np.zeros((nlagX, T + 1, N))
+        HDshock = np.zeros((N, T + 1, N))
+
+        for j in range(N):
+            eps_big = np.zeros((N, T + 1))
+            eps_big[j, 1:] = eps[j, :]
+            for t in range(1, T + 1):
+                HDshock_big[:, t, j] = B_big @ eps_big[:, t] + Bcomp @ HDshock_big[:, t - 1, j]
+                HDshock[:, t, j] = Icomp @ HDshock_big[:, t, j]
+
+        # === INITIAL CONDITION ===
+        HDinit_big = np.zeros((nlagX, T + 1))
+        HDinit = np.zeros((N, T + 1))
+        HDinit_big[:, 0] = X[0, :-const_cols]  # exclude constant/trend
+        HDinit[:, 0] = Icomp @ HDinit_big[:, 0]
+        for t in range(1, T + 1):
+            HDinit_big[:, t] = Bcomp @ HDinit_big[:, t - 1]
+            HDinit[:, t] = Icomp @ HDinit_big[:, t]
+
+        # === CONSTANT TERM ===
+        HDconst_big = np.zeros((nlagX, T + 1))
+        HDconst = np.zeros((N, T + 1))
+        if self.constant:
+            C = np.zeros((nlagX,))
+            C[:N] = B[-1, :]
+            for t in range(1, T + 1):
+                HDconst_big[:, t] = C + Bcomp @ HDconst_big[:, t - 1]
+                HDconst[:, t] = Icomp @ HDconst_big[:, t]
+
+        # === TREND TERM ===
+        HDtrend_big = np.zeros((nlagX, T + 1))
+        HDtrend = np.zeros((N, T + 1))
+        if self.timetrend:
+            T_vec = np.zeros((nlagX,))
+            T_vec[:N] = B[-2 if self.constant else -1, :]
+            for t in range(1, T + 1):
+                HDtrend_big[:, t] = T_vec * (t - 1) + Bcomp @ HDtrend_big[:, t - 1]
+                HDtrend[:, t] = Icomp @ HDtrend_big[:, t]
+
+        # === Final HD Aggregation ===
+        HDendo = HDinit + HDconst + HDtrend + np.sum(HDshock, axis=2)
+
+        # === Save outputs ===
+        HDshock_out = np.full((T + P, N, N), np.nan)
+        for j in range(N):  # shock index
+            for i in range(N):  # variable index
+                HDshock_out[P:, i, j] = HDshock[i, 1:, j]
+
+        self.HD = {
+            'shock': HDshock_out,  # shape: [T+P, variable, shock]
+            'init': np.vstack([np.full((P - 1, N), np.nan), HDinit[:, :].T]),
+            'const': np.vstack([np.full((P, N), np.nan), HDconst[:, 1:].T]),
+            'trend': np.vstack([np.full((P, N), np.nan), HDtrend[:, 1:].T]),
+            'endo': np.vstack([np.full((P, N), np.nan), HDendo[:, 1:].T])
+        }
+        
+        if plot_hd:
+            hd_plot = generate_hd_plot(self, series_titles, shock_titles, title)
+            display(hd_plot)
+
+        return self.HD
                 
     
     def forecast(self, forecast_data):

@@ -363,3 +363,90 @@ def generate_fevd_plot(self, series_titles=None, shock_titles=None, title=None, 
     )
 
     return plot
+
+
+
+def generate_hd_plot(self, series_titles=None, shock_titles=None, title=None, color_palette=None):
+    """
+    Plot Historical Decomposition (HD) as stacked bar chart for shocks + total line (black).
+    
+    Parameters:
+    - self.HD['shock']: array [T x shocks x variables]
+    - series_titles: list of variable names
+    - shock_titles: list of shock names
+    - title: plot title
+    - color_palette: list of HEX colors
+    
+    Returns:
+    - plotnine.ggplot object
+    """
+    hd_array = self.HD['shock']  # shape: [T x S x V]
+    T, S, V = hd_array.shape
+    dates = pd.to_datetime(self.dates)  # Use last T dates (after lags)
+
+    if series_titles is None:
+        series_titles = self.names
+    if shock_titles is None:
+        shock_titles = [f"Shock {i+1}" for i in range(S)]
+    if color_palette is None:
+        color_palette = ["#fbb4ae", "#b3cde3", "#ccebc5"][:S]
+
+    # Long-format dataframe
+    records = []
+    for t in range(T):
+        for s in range(S):
+            for v in range(V):
+                records.append({
+                    "Date": dates[t],
+                    "Shock": shock_titles[s],
+                    "Variable": series_titles[v],
+                    "Contribution": hd_array[t, s, v]
+                })
+    df = pd.DataFrame(records)
+
+    # Cumulative line
+    df_sum = df.groupby(['Date', 'Variable'])['Contribution'].sum().reset_index()
+    df_sum['Shock'] = 'Total'
+    df_sum.rename(columns={'Contribution': 'TotalShockSum'}, inplace=True)
+
+    # Format categories
+    df["Variable"] = pd.Categorical(df["Variable"], categories=series_titles, ordered=True)
+    df["Shock"] = pd.Categorical(df["Shock"], categories=shock_titles, ordered=True)
+    df_sum["Variable"] = pd.Categorical(df_sum["Variable"], categories=series_titles, ordered=True)
+
+    # Layout
+    ncols = min(2, V)
+    nrows = math.ceil(V / ncols)
+
+    plot = (
+        ggplot(df, aes(x="Date", y="Contribution", fill="Shock")) +
+        geom_bar(stat="identity", position="stack") +
+        geom_line(df_sum, aes(x="Date", y="TotalShockSum", group="Variable"),
+                  color="black", size=1.1) +
+        facet_wrap("~Variable", ncol=ncols, scales="free") +
+        scale_fill_manual(values=color_palette) +
+        scale_x_datetime(date_labels="%y", date_breaks="5 years") +
+        labs(
+            title=title or "Historical Decomposition",
+            x="Date",
+            y="Shock Contribution"
+        ) +
+        theme(
+            figure_size=(ncols * 5, nrows * 3),
+            plot_title=element_text(size=14, face="bold"),
+            panel_background=element_rect(fill="white"),
+            plot_background=element_rect(fill="white"),
+            strip_background=element_rect(fill="white"),
+            strip_text=element_text(size=12, weight='bold'),
+            panel_grid_major=element_line(color="grey", linetype="dashed", alpha=0.2),
+            panel_grid_minor=element_blank(),
+            axis_line_x=element_line(color="black"),
+            axis_line_y=element_line(color="black"),
+            legend_position='bottom',
+            legend_direction='horizontal',
+            legend_title=element_blank(),
+            axis_text_x=element_text(size=9)
+        )
+    )
+
+    return plot

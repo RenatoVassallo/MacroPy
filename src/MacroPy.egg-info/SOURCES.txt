@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/MacroPy/__init__.py
 src/MacroPy/bvar.py
+src/MacroPy/cvar.py
 src/MacroPy/data_handling.py
 src/MacroPy/get_macrodata.py
 src/MacroPy/plots.py
