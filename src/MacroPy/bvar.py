@@ -167,7 +167,7 @@ class BayesianVAR:
                 print("Note: Only showing first 2 lags of coefficients.")
 
 
-    def compute_irfs(self, plot_irfs: bool = False, cred_interval: list = [0.68, 0.95]):
+    def compute_irfs(self, plot_irfs: bool = False, cred_interval = 0.68):
         """
         Compute impulse response functions (IRFs) from posterior draws.
         Each draw produces one IRF matrix of shape [horizon, variables, shocks].
