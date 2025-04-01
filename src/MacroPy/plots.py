@@ -285,3 +285,81 @@ def generate_irf_plots(self, cred_interval: list = [0.68, 0.95]):
 
     return ir_plots
 
+
+def generate_fevd_plot(self, series_titles=None, shock_titles=None, title=None, color_palette=None):
+    """
+    Plot FEVD as stacked area plot using cumulative bands (like MATLAB's AreaPlot).
+    
+    - self.fevd: [steps, shocks, variables]
+    """
+    steps, shocks, variables = self.fevd.shape
+    
+    # Replace with custom titles if provided
+    var_names = self.names
+
+    if shock_titles is None:
+        shock_titles = [f"Shock {i+1}" for i in range(shocks)]
+    if color_palette is None:
+        color_palette = ["#fbb4ae", "#b3cde3", "#ccebc5"][:shocks]  # soft pastel tones
+
+    # Build cumulative contributions (from last shock to first)
+    records = []
+    for v in range(variables):
+        for h in range(steps):
+            cum_upper = 100.0
+            for s in reversed(range(shocks)):
+                contrib = self.fevd[h, s, v]
+                cum_lower = cum_upper - contrib
+                # Ensure the bottom layer starts at 0
+                if s == 0:
+                    cum_lower = 0
+                records.append({
+                    "Horizon": h + 1,
+                    "Variable": var_names[v],
+                    "Shock": shock_titles[s],
+                    "ymin": cum_lower,
+                    "ymax": cum_upper
+                })
+                cum_upper = cum_lower
+
+    df = pd.DataFrame(records)
+    df["Shock"] = pd.Categorical(df["Shock"], categories=shock_titles, ordered=True)
+    df["Variable"] = pd.Categorical(df["Variable"], categories=var_names, ordered=True)
+    if series_titles:
+        title_dict = dict(zip(var_names, series_titles))
+        df['Variable'] = df['Variable'].map(title_dict)
+        df['Variable'] = pd.Categorical(df['Variable'], categories=series_titles, ordered=True)
+
+    # Layout
+    ncols = min(2, variables)
+    nrows = math.ceil(variables / ncols)
+        
+    plot = (
+        ggplot(df, aes(x="Horizon", ymin="ymin", ymax="ymax", fill="Shock")) +
+        geom_ribbon(alpha=0.9) +
+        facet_wrap("~Variable", ncol=2, scales="free") +
+        scale_fill_manual(values=color_palette) +
+        labs(
+            title=title or "Forecast Error Variance Decomposition",
+            x="Horizon (steps)",
+            y="Contribution to FEVD (%)"
+        ) +
+        scale_y_continuous(limits=[0, 100]) +
+        theme(
+            figure_size=(ncols * 5, nrows * 3),
+            plot_title=element_text(size=14, face="bold") if title else element_blank(),
+            panel_background=element_rect(fill="white"),
+            plot_background=element_rect(fill="white"),
+            strip_background=element_rect(fill="white"),
+            strip_text=element_text(size=12, weight='bold'),
+            panel_grid_major=element_line(color="grey", linetype="dashed", alpha=0.2),
+            panel_grid_minor=element_blank(),
+            legend_position='bottom',
+            legend_direction='horizontal',
+            legend_title=element_blank(),
+            axis_line_x=element_line(color="black"),
+            axis_line_y=element_line(color="black")
+        )
+    )
+
+    return plot

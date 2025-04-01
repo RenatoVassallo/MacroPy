@@ -5,7 +5,7 @@ from IPython.display import display
 from numpy.linalg import inv, eigvals
 from numpy.random import multivariate_normal
 from .data_handling import prepare_data, estimate_ols
-from .plots import generate_series_plot, generate_irf_plots
+from .plots import generate_series_plot, generate_irf_plots, generate_fevd_plot
 from .summary import generate_summary
 
 class ClassicVAR:
@@ -155,6 +155,73 @@ class ClassicVAR:
                 display(p)
 
         return self.ir_draws
+    
+    
+    def compute_fevd(self, plot_fevd: bool = True, series_titles: list = None,
+                     shock_titles: list = None, title: str = None):
+        """
+        Compute the Forecast Error Variance Decomposition (FEVD) for a Classic VAR model.
+
+        Parameters:
+        - steps: int, number of steps/horizons to compute the decomposition
+
+        Returns:
+        - fevd: np.ndarray of shape [steps, shocks, variables], in percentage
+        """
+        N = self.n_endo
+        P = self.lags
+        H = self.hor
+        B = self.reshape_beta(self.b_ols, self.ncoeff_eq, N)
+        Sigma = self.Sigma_ols
+
+        # Compute structural impact matrix
+        try:
+            S = np.linalg.cholesky(Sigma)
+        except np.linalg.LinAlgError:
+            raise ValueError("Covariance matrix is not positive definite")
+
+        # Initialize Wold representation multipliers
+        PSI = np.zeros((N, N, H))
+        PSI[:, :, 0] = np.eye(N)
+
+        # Reconstruct lag polynomial Bp from reshaped B (skip exogenous rows)
+        Bp = np.zeros((N, N, P))
+        for p in range(P):
+            Bp[:, :, p] = B[p * N:(p + 1) * N, :].T
+
+        # Compute Wold representation: PSI matrices
+        for h in range(1, H):
+            for j in range(1, h + 1):
+                if j <= P:
+                    PSI[:, :, h] += PSI[:, :, h - j] @ Bp[:, :, j - 1]
+
+        # FEVD storage
+        self.fevd = np.zeros((H, N, N))  # [horizon, shock, variable]
+
+        for shock in range(N):
+            # Initialize MSE and MSE_shock
+            MSE = np.zeros((N, N, H))
+            MSE[:, :, 0] = Sigma
+
+            MSE_shock = np.zeros((N, N, H))
+            S_shock = S[:, shock].reshape(-1, 1)
+            MSE_shock[:, :, 0] = S_shock @ S_shock.T
+
+            for h in range(1, H):
+                PSI_h = PSI[:, :, h]
+                MSE[:, :, h] = MSE[:, :, h - 1] + PSI_h @ Sigma @ PSI_h.T
+                MSE_shock[:, :, h] = MSE_shock[:, :, h - 1] + PSI_h @ (S_shock @ S_shock.T) @ PSI_h.T
+
+            # Compute FEVD
+            for h in range(H):
+                FECD = MSE_shock[:, :, h] / MSE[:, :, h]
+                self.fevd[h, shock, :] = 100 * np.diag(FECD)
+       
+        if plot_fevd:
+            fevd_plot = generate_fevd_plot(self, series_titles, shock_titles, title)
+            display(fevd_plot)
+
+        return self.fevd
                 
     
     def forecast(self, forecast_data):
