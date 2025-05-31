@@ -5,6 +5,7 @@ __pycache__/
 .ipynb_checkpoints/
 *.pyc
 dist/
+.DS_Store
 
 #ignore local environment
 .env
