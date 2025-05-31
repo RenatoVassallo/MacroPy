@@ -59,7 +59,7 @@ def generate_series_plot(yy, yy_dates=None, yy_names=None, series_titles=None, t
 
     # Build base plot
     plot = (
-        ggplot(df, aes(x='index', y='Value')) +
+        ggplot(df, aes(x='index', y='Value', group='Variable')) +
         geom_line(color=line_color, size=1.2) +
         facet_wrap('~Variable', ncol=2, scales='free') +
         scale_x_datetime(date_labels="%y", breaks=breaks_date(n=n_breaks)) +
@@ -102,15 +102,18 @@ def generate_coeff_plot(self):
     labels = []
     equations = []
     lags_list = []
+    
+    self.ncoeff_eq = self.n_endo * self.lags + (1 if self.constant else 0)
 
-    for i in range(self.n_endo):  # equation index
-        if self.constant:
-            labels.append(f"Constant {i+1}")
-            lags_list.append(0)
+    for i in range(self.n_endo):  # Equation i
         for lag in range(1, self.lags + 1):
             for j in range(self.n_endo):
                 labels.append(f"b_{i+1},{j+1} (lag {lag})")
                 lags_list.append(lag)
+        if self.constant:
+            labels.append(f"Constant {i+1}")
+            lags_list.append(0)
+        
         equations.extend([self.names[i]] * self.ncoeff_eq)
 
     if len(labels) != num_coeffs:

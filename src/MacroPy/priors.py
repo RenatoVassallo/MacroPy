@@ -22,18 +22,18 @@ def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params):
     # Prior mean
     B0 = np.zeros((ncoeff_eq, N))
     for i in range(N):
-        B0[i+1, i] = mn_mean
+        B0[i, i] = mn_mean
     b0 = B0.flatten(order="F")
     
     # Prior variance matrix
     H = np.zeros((ncoeff_eq * N, ncoeff_eq * N))
     for i in range(N):
-        constIdx = i * ncoeff_eq
+        constIdx = (i + 1) * ncoeff_eq - 1
         H[constIdx, constIdx] = (std[i] * lamda4) ** 2
 
         for lag in range(1, lags + 1):
             for j in range(N):
-                coeffIdx = i * ncoeff_eq + (lag - 1) * N + j + 1
+                coeffIdx = i * ncoeff_eq + (lag - 1) * N + j
                 if i == j:
                     if lag == 1:
                         H[coeffIdx, coeffIdx] = lamda1 ** 2

@@ -11,11 +11,11 @@ def generate_summary(settings):
     # === VAR EQUATIONS IN LATEX ===
     var_equations = r"\begin{align*}" + "\n"
     for i, var in enumerate(settings.names):
-        equation = f"{var}_{{t}} &= c_{{{i+1}}} "  # Constant term
+        equation = f"{var}_{{t}} &="
         for lag in range(1, settings.lags + 1):
             for j, other_var in enumerate(settings.names):
-                equation += f"+ b_{{{i+1},{j+1}}} {other_var}_{{t-{lag}}} "
-        equation += f"+ e_{{t}}^{{{var}}} \\\\\n"
+                equation += f" b_{{{i+1},{j+1}}}^{({lag})} {other_var}_{{t-{lag}}} +"
+        equation += f" c_{{{i+1}}} + e_{{t}}^{{{var}}} \\\\\n"
         var_equations += equation
     var_equations += r"\end{align*}"
 
@@ -23,7 +23,7 @@ def generate_summary(settings):
     summary = f"""
 **MacroPy Toolbox for Macroeconometric Analysis in Python**  
 Developed by [{linkedin_text}]({linkedin_url}), Institute for Economic Analysis (IAE-CSIC)  
-Version 0.1, March 2025  
+Version 0.1.2, May 2025  
 
 ---
 

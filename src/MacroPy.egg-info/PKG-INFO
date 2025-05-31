@@ -15,7 +15,6 @@ Requires-Dist: requests==2.32.3
 Requires-Dist: fredapi==0.5.2
 Requires-Dist: lxml==5.3.1
 Requires-Dist: xlsxwriter==3.2.2
-Requires-Dist: wbdata>=1.0.0
 Requires-Dist: python-dotenv
 Requires-Dist: plotnine==0.14.5
 Requires-Dist: mizani==0.13.1

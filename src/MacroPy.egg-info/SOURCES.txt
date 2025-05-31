@@ -13,4 +13,3 @@ src/MacroPy.egg-info/SOURCES.txt
 src/MacroPy.egg-info/dependency_links.txt
 src/MacroPy.egg-info/requires.txt
 src/MacroPy.egg-info/top_level.txt
-src/MacroPy/datasets/SW2001_Data.csv

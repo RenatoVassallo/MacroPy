@@ -15,7 +15,34 @@ class BayesianVAR:
                  prior_type: int = 1, prior_params: dict = {"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5},
                  post_draws: int = 5000, burnin: float = 0.5, hor: int = 20, fhor: int = 12, irf_1std: int = 1):
         """
-        Bayesian VAR model.
+        Bayesian Vector Autoregression (BVAR) model class.
+
+        This class implements a Bayesian VAR for multivariate time series analysis, allowing 
+        for different prior distributions and posterior simulation via Gibbs sampling. The model 
+        supports inclusion of a constant and deterministic time trend, and is suitable for tasks 
+        such as forecasting, impulse response analysis, and structural shock identification.
+
+        Parameters:
+            y (pd.DataFrame): Input time series data with a datetime index and variables in columns.
+            lags (int): Number of autoregressive lags (default is 1).
+            constant (bool): Whether to include a constant term (default is True).
+            timetrend (bool): Whether to include a deterministic time trend (default is False).
+            prior_type (int): Choice of prior:
+                1 = Minnesota Prior
+                2 = Normal-Wishart Prior
+                3 = Normal-Diffuse Prior
+            prior_params (dict): Dictionary of hyperparameters for the chosen prior.
+                Default for Minnesota:
+                    - mn_mean: Prior mean on first own lag
+                    - lamda1: Own lag shrinkage
+                    - lamda2: Cross lag shrinkage
+                    - lamda3: Lag decay
+                    - lamda4: Constant term variance
+            post_draws (int): Number of posterior draws including burn-in (default is 5000).
+            burnin (float): Proportion of draws to discard as burn-in (default is 0.5).
+            hor (int): Horizon for impulse response functions (default is 20).
+            fhor (int): Forecast horizon (default is 12).
+            irf_1std (int): Scale of structural shock for IRF (1 standard deviation, default is 1).
         """
         if not isinstance(y, pd.DataFrame):
             raise ValueError("Input data 'y' must be a pandas DataFrame with a datetime index.")
@@ -99,11 +126,16 @@ class BayesianVAR:
 
     @staticmethod
     def build_companion_matrix(B, N, P):
-        """Construct the VAR companion matrix."""
+        """
+        Construct the VAR companion matrix from coefficient matrix B.
+        Assumes B has shape [(N * P + 1), N], with the constant as the last row.
+        """
         Bcomp = np.zeros((N * P, N * P))
-        Bcomp[:N, :] = B[1:, :].T  # skip constant row
+        Bcomp[:N, :] = B[:-1, :].T  # exclude last row (constant)
+        
         if P > 1:
             Bcomp[N:, :-N] = np.eye(N * (P - 1))
+        
         return Bcomp
 
     @staticmethod

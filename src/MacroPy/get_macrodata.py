@@ -4,25 +4,9 @@ import datetime
 import requests
 import logging
 import fredapi as fa
-import matplotlib.pyplot as plt
-from IPython.display import display
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO)
-
-
-import importlib.resources as pkg_resources
-from MacroPy import datasets  # this tells Python where the package is
-
-def load_datasets(name="SW2001"):
-    if name != "SW2001":
-        raise ValueError("Currently, only 'SW2001' is supported.")
-
-    # Load CSV as a package resource
-    with pkg_resources.files(datasets).joinpath("SW2001_Data.csv").open("r") as f:
-        df_sw = pd.read_csv(f, index_col="date", parse_dates=True)
-
-    return df_sw
 
 
 def convert_date(date_str):
