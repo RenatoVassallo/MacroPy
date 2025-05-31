@@ -7,7 +7,7 @@ from numpy.random import multivariate_normal
 from scipy.stats import invwishart
 from .data_handling import prepare_data, estimate_ols
 from .priors import MinnesotaPrior, NormalWishartPrior, NormalDiffusePrior
-from .plots import generate_series_plot, generate_coeff_plot, generate_irf_plots
+from .plots import generate_coeff_plot, generate_irf_plots, generate_forecast_plots
 from .summary import generate_summary
 
 class BayesianVAR:
@@ -58,9 +58,13 @@ class BayesianVAR:
         self.prior_params = prior_params
         self.post_draws = post_draws
         self.burnin = int(burnin * post_draws)
+        self.n_draws = self.post_draws - self.burnin  # Effective number of draws after burn-in
         self.hor = hor
         self.fhor = fhor
         self.irf_1std = irf_1std
+        self.mean_forecasts = np.zeros((self.n_draws, self.fhor, self.n_endo))  # Forecasts without shocks
+        self.forecasts = None      # With shocks
+        self.cond_forecasts = np.zeros((self.n_draws, fhor, self.n_endo))
         
         # Number of exogenous variables and coefficients 
         self.n_exo = int(constant) + int(timetrend)
@@ -98,26 +102,6 @@ class BayesianVAR:
     def model_summary(self):
         """Print a summary of the Bayesian VAR model."""
         display(generate_summary(self))
-                
-        
-    def plot_series(self, series_titles: list = None, title: str = None, color_scheme: int = 1, 
-                    n_breaks: int = 10, zero_line: bool = False):
-        """
-        Generate and display time series plots for the model's variables.
-        
-        Inputs:
-        - `title` (str, optional): Main title of the plot. Defaults to None.
-        - `series_titles` (list, optional): Custom titles for the series, replacing default variable names. Defaults to None.
-        - `color_scheme` (int, optional): Choose between 4 line colors: 1 (Dark Blue, default), 2 (Soft Red), 3 (Muted Green), and 4 (Soft Purple).
-        - `n_breaks` (int, optional): Number of major x-axis ticks (date breaks). Defaults to `10`.
-
-        Outputs:
-        - Displays the generated plot using `display()`.
-        """
-        plot = generate_series_plot(self.yy, self.yy_dates, self.names, series_titles=series_titles, title=title,
-                                    color_scheme=color_scheme, n_breaks=n_breaks, zero_line=zero_line)
-        
-        return display(plot)
     
     @staticmethod
     def is_stable(Bcomp):
@@ -250,27 +234,175 @@ class BayesianVAR:
         return self.ir_draws
                 
     
-    def forecast(self, forecast_data):
-        """Compute forecasts."""
-        for d in range(len(self.beta_draws)):
-            frcst_no_shock, frcst_with_shocks = generate_forecasts(
-                forecast_data, self.beta_draws[d], self.Sigma_draws[d], self.options
-            )
-            self.forecasts["no_shocks"].append(frcst_no_shock)
-            self.forecasts["with_shocks"].append(frcst_with_shocks)
+    def forecast(self, fhor: int = 12, plot_forecast: bool = True, cred_interval: list = [0.68, 0.95],
+                 last_k: int = None, n_breaks: int = 10, zero_line: bool = False):
+        """
+        Generate Bayesian forecasts using posterior draws of beta and Sigma.
         
-        self.forecasts["no_shocks"] = np.array(self.forecasts["no_shocks"])
-        self.forecasts["with_shocks"] = np.array(self.forecasts["with_shocks"])
+        Parameters:
+            fhor (int): Forecast horizon (e.g., 12 quarters)
+            cred_interval (list): List of credible intervals to display (e.g., [0.68, 0.95])
+            last_k (int): If set, show only last_k historical periods + forecast. If None, show full history.
+            n_breaks (int): Number of x-axis breaks (year ticks).
+            zero_line (bool): Whether to include a horizontal zero line in plots.
+
+        Returns:
+            forecasts: np.ndarray of shape (n_draws, steps, n_endo)
+        """
+
+        n_draws = len(self.beta_draws)
+        n_endo = self.n_endo
+        lags = self.lags
+        k = self.ncoeff_eq
+
+        # Initialize forecast array
+        self.forecasts = np.zeros((n_draws, fhor, n_endo))
+        Y_history = self.yy[-lags:, :]  # shape (lags, n_endo)
+
+        # Exogenous forecast matrix (e.g., constant term)
+        if self.constant:
+            Xexo_future = np.ones((fhor, 1))  # constant-only
+        else:
+            Xexo_future = np.zeros((fhor, 0))  # no exogenous
+
+        for i in range(n_draws):
+            beta_vec = self.beta_draws[i]
+            Sigma = self.Sigma_draws[i]
+
+            # Reshape beta
+            B = self.reshape_beta(beta_vec, k, n_endo)  # shape (k, n_endo)
+
+            # Initialize history (copy for forecast path)
+            Y = Y_history.copy().tolist()
+
+            for h in range(fhor):
+                Y_lags = np.hstack([Y[-lag] for lag in range(1, lags + 1)])
+                X_t = Y_lags
+                if self.constant:
+                    X_t = np.hstack([X_t, Xexo_future[h]])
+
+                # Compute mean forecast (no shock)
+                y_deterministic = X_t @ B
+                self.mean_forecasts[i, h, :] = y_deterministic
+
+                # Add stochastic component
+                eps = multivariate_normal(mean=np.zeros(n_endo), cov=Sigma)
+                y_forecast = y_deterministic + eps
+
+                self.forecasts[i, h, :] = y_forecast
+                Y.append(y_forecast)
+                
+        if plot_forecast:
+            forecast_plot = generate_forecast_plots(self, self.forecasts, cred_interval, last_k, n_breaks, zero_line, forecast_type="Unconditional")
+            display(forecast_plot)
+
+        return self.forecasts
     
-    def run_full_analysis(self, forecast_data):
-        """Run the full pipeline: posterior sampling, IRFs, and forecasts."""
-        self.sample_posterior()
-        self.compute_irfs()
-        self.forecast(forecast_data)
+    
+    def _solve_shocks(self, conditions, fmat, ortirf):
+        """
+        Solve for structural shocks (eta) such that the conditional forecast matches the desired path.
         
-        return {
-            "beta_draws": self.beta_draws,
-            "Sigma_draws": self.Sigma_draws,
-            "ir_draws": self.ir_draws,
-            "forecasts": self.forecasts
-        }
+        Parameters:
+            conditions (steps x n_endo): matrix with np.nan for unconstrained
+            fmat (steps x n_endo): baseline forecast
+            ortirf (steps x n_endo x n_endo): orthogonal IRFs
+
+        Returns:
+            eta (steps x n_endo): structural shocks
+        """
+        steps, n = conditions.shape
+        R = []
+        r = []
+
+        for t in range(steps):
+            for j in range(n):
+                target = conditions[t, j]
+                if not np.isnan(target):
+                    # Right-hand side difference
+                    r.append(target - fmat[t, j])
+                    
+                    # Construct 1 x (n * steps) row
+                    R_row = np.zeros((n * steps,))
+                    for k in range(t + 1):
+                        irf_block = ortirf[t - k, j, :]  # (n,)
+                        R_row[k * n: (k + 1) * n] = irf_block
+                    R.append(R_row)
+
+        if not R:
+            return np.zeros((steps, n))  # No conditions
+
+        R = np.vstack(R)
+        r = np.array(r)
+
+        # Solve R * eta_vec = r
+        try:
+            eta_vec = np.linalg.solve(R, r)
+        except np.linalg.LinAlgError:
+            eta_vec, *_ = np.linalg.lstsq(R, r, rcond=None)
+
+        # Reshape to (steps, n)
+        eta = eta_vec.reshape(steps, n)
+
+        return eta
+    
+    
+    def conditional_forecast(self, conditions: np.ndarray, fhor: int = 12, plot_forecast: bool = True, 
+                             cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10, 
+                             zero_line: bool = False):
+        """
+        Generate conditional forecasts using structural shocks.
+
+        Parameters:
+            conditions (np.ndarray): (fhor x n_endo) matrix with NaNs where no condition is imposed
+            fhor (int): Forecast horizon
+
+        Returns:
+            conditional_forecast: (draws, fhor, n_endo)
+            shock_record: (draws, fhor, n_endo)
+        """
+        n_endo = self.n_endo
+
+        # === Assume no exogenous variables beyond constant ===
+        data_exo_a = np.zeros((self.yy.shape[0], 0))
+        data_exo_p = np.zeros((fhor, 0))
+
+        if self.constant:
+            data_exo_a = np.hstack([np.ones((self.yy.shape[0], 1)), data_exo_a])
+            data_exo_p = np.hstack([np.ones((fhor, 1)), data_exo_p])
+
+        # === Initialize outputs ===
+        shock_record = np.zeros((self.n_draws, fhor, n_endo))
+
+        # Compute IRFs if not already available
+        if not hasattr(self, 'ir_draws') or len(self.ir_draws) == 0:
+            self.compute_irfs(plot_irfs=False)
+
+        for i in range(self.n_draws):
+            # Forecasts without shocks
+            fmat = self.mean_forecasts[i]  # shape (fhor, n_endo)
+
+            # IRFs (ortho)
+            ortirf = self.ir_draws[i][:fhor]  # shape (fhor, n_endo, n_endo)
+
+            # Solve for shocks to meet conditions
+            eta = self._solve_shocks(conditions, fmat, ortirf)
+            eta = eta.reshape(fhor, n_endo)
+
+            # Conditional forecast: fmat + contribution of eta via IRFs
+            cdforecast = np.zeros((fhor, n_endo))
+            for jj in range(fhor):
+                shock_contrib = np.zeros(n_endo)
+                for kk in range(jj + 1):
+                    shock_contrib += ortirf[jj - kk, :, :] @ eta[kk, :]
+                cdforecast[jj, :] = fmat[jj, :] + shock_contrib
+
+            self.cond_forecasts[i, :, :] = cdforecast
+            shock_record[i, :, :] = eta
+            
+        if plot_forecast:
+            forecast_plot = generate_forecast_plots(self, self.cond_forecasts, cred_interval, last_k, n_breaks, zero_line, forecast_type="Conditional")
+            display(forecast_plot)
+
+        return self.cond_forecasts, shock_record
+

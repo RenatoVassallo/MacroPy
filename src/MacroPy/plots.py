@@ -453,3 +453,109 @@ def generate_hd_plot(self, series_titles=None, shock_titles=None, title=None, co
     )
 
     return plot
+
+
+
+def generate_forecast_plots(self, forecasts: np.ndarray, cred_interval: list = [0.68, 0.95], 
+                            last_k: int = None, n_breaks: int = 10, zero_line: bool = False,
+                            forecast_type: str = "Unconditional"):
+    """
+    Plot actual time series and forecast distributions for each variable.
+
+    Parameters:
+        forecasts (np.ndarray): Array of shape (n_draws, steps, n_endo)
+        cred_interval (list): List of credible intervals to display (e.g., [0.68, 0.95])
+        last_k (int): Show only last_k historical observations + forecast. If None, show all history.
+        n_breaks (int): Number of x-axis breaks (year ticks).
+        zero_line (bool): Whether to include a horizontal zero line.
+        forecast_type (str): "Unconditional" or "Conditional"
+
+    Returns:
+        ggplot object with forecast + actual data
+    """
+    n_draws, steps, n_endo = forecasts.shape
+    cred_intervals = [cred_interval] if isinstance(cred_interval, (float, int)) else list(cred_interval)
+
+    # === Historical Data ===
+    hist_dates = self.yy_dates
+    yy = self.yy
+    if last_k is not None:
+        yy = yy[-last_k:]
+        hist_dates = hist_dates[-last_k:]
+
+    hist_df = pd.DataFrame(yy, columns=self.names)
+    hist_df["date"] = hist_dates
+    hist_df = hist_df.melt(id_vars="date", var_name="Variable", value_name="Value")
+    hist_df["Type"] = "Actual"
+
+    # === Forecast Data ===
+    forecast_start = hist_dates[-1]
+    freq = pd.infer_freq(hist_dates[:5]) or 'Q'
+    forecast_dates = pd.date_range(start=forecast_start, periods=steps + 1, freq=freq)[1:]
+
+    data_list = []
+    for var_idx, var_name in enumerate(self.names):
+        dist = forecasts[:, :, var_idx]
+        for t in range(steps):
+            row = {
+                "date": forecast_dates[t],
+                "Variable": var_name,
+                "Median": np.percentile(dist[:, t], 50),
+            }
+            for ci in cred_intervals:
+                lower, upper = 50 - ci * 50, 50 + ci * 50
+                row[f"Lower{int(ci*100)}"] = np.percentile(dist[:, t], lower)
+                row[f"Upper{int(ci*100)}"] = np.percentile(dist[:, t], upper)
+            data_list.append(row)
+
+    forecast_df = pd.DataFrame(data_list)
+    forecast_df["Type"] = forecast_type
+
+    # === Combine ===
+    combined_df = pd.concat([
+        hist_df.rename(columns={"Value": "Median"}),
+        forecast_df
+    ], ignore_index=True)
+    combined_df["Variable"] = pd.Categorical(combined_df["Variable"], categories=self.names, ordered=True)
+    combined_df = combined_df.sort_values(["Variable", "date"])
+    forecast_df["Variable"] = pd.Categorical(forecast_df["Variable"], categories=self.names, ordered=True)
+
+    # === Plot Layout ===
+    ncols = min(2, n_endo)
+    nrows = math.ceil(n_endo / ncols)
+
+    # === Plot ===
+    forecast_color = "#1f77b4" if forecast_type == "Unconditional" else "#d62728"
+
+    p = (
+        ggplot(combined_df, aes(x="date", y="Median")) +
+        facet_wrap("~Variable", ncol=ncols, scales="free_y") +
+        scale_x_datetime(date_labels="%y", breaks=breaks_date(n=n_breaks)) +
+        labs(title=f"{forecast_type} Forecast", x="", y="") +
+        theme(
+            figure_size=(ncols * 5, nrows * 3),
+            strip_text=element_text(size=12, weight='bold'),
+            axis_text=element_text(size=10),
+            axis_title=element_text(size=11),
+            panel_background=element_rect(fill="white"),
+            plot_background=element_rect(fill="white"),
+            panel_grid_major=element_line(color="grey", linetype="dashed", size=0.3),
+            panel_grid_minor=element_line(color="lightgrey", size=0.1),
+        )
+    )
+
+    for ci in sorted(cred_intervals, reverse=True):
+        p += geom_ribbon(
+            data=forecast_df,
+            mapping=aes(ymin=f"Lower{int(ci*100)}", ymax=f"Upper{int(ci*100)}"),
+            alpha=0.4 if ci < 0.9 else 0.2,
+            fill=forecast_color
+        )
+
+    p += geom_line(data=combined_df[combined_df["Type"] == "Actual"], color="black", size=1)
+    p += geom_line(data=combined_df[combined_df["Type"] == forecast_type], color=forecast_color, size=1.1)
+
+    if zero_line:
+        p += geom_hline(yintercept=0, linetype='dashed', color='black')
+
+    return p

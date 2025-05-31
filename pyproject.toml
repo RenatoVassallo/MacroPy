@@ -26,7 +26,6 @@ dev = [
     "python-dotenv>=1.1.0",
     "seaborn>=0.13.2",
     "xlsxwriter==3.2.2",
-    "python-dotenv",
     "openpyxl==3.1.5",
 ]
 
