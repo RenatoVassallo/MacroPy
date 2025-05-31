@@ -1,6 +1,10 @@
 # Ignore Python cache files
 __pycache__/
 *.py[cod]
+.egg-info/
+.ipynb_checkpoints/
+*.pyc
+dist/
 
 #ignore local environment
 .env
