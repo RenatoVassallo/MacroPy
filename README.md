@@ -20,26 +20,6 @@ Built for researchers. Designed for clarity. Ready for journals.
 
 ---
 
-## 📂 Project Structure
-
-MacroPy/
-├── src/
-│   └── MacroPy/
-│       ├── init.py
-│       ├── cvar.py
-│       ├── bvar.py
-│       ├── data_handling.py
-│       ├── get_macrodata.py
-│       ├── plots.py
-│       ├── priors.py
-│       ├── summary.py
-├── tests/
-├── notebooks/
-├── pyproject.toml
-└── README.md
-
----
-
 ## 🧪 Quick Example
 
 ```python
