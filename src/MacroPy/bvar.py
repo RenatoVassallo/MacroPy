@@ -13,7 +13,7 @@ from .summary import generate_summary
 class BayesianVAR:
     def __init__(self, y: pd.DataFrame, lags: int = 1, constant: bool = True, timetrend: bool = False, 
                  prior_type: int = 1, prior_params: dict = {"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5},
-                 post_draws: int = 5000, burnin: float = 0.5, hor: int = 20, fhor: int = 12, irf_1std: int = 1):
+                 b_exo: np.ndarray = None , post_draws: int = 5000, burnin: float = 0.5, hor: int = 20, fhor: int = 12, irf_1std: int = 1):
         """
         Bayesian Vector Autoregression (BVAR) model class.
 
@@ -38,6 +38,7 @@ class BayesianVAR:
                     - lamda2: Cross lag shrinkage
                     - lamda3: Lag decay
                     - lamda4: Constant term variance
+            b_exo (np.ndarray): block exogeneity mask. Variable i does not depend on lagged values of variable j.
             post_draws (int): Number of posterior draws including burn-in (default is 5000).
             burnin (float): Proportion of draws to discard as burn-in (default is 0.5).
             hor (int): Horizon for impulse response functions (default is 20).
@@ -56,6 +57,7 @@ class BayesianVAR:
         self.timetrend = timetrend
         self.prior_type = prior_type
         self.prior_params = prior_params
+        self.b_exo = b_exo
         self.post_draws = post_draws
         self.burnin = int(burnin * post_draws)
         self.n_draws = self.post_draws - self.burnin  # Effective number of draws after burn-in
@@ -89,11 +91,11 @@ class BayesianVAR:
         self.prior_name = prior_dict[prior_type]
         
         if prior_type == 1:
-            self.prior = MinnesotaPrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params)
+            self.prior = MinnesotaPrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params, self.b_exo)
         elif prior_type == 2:
-            self.prior = NormalWishartPrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params)
+            self.prior = NormalWishartPrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params, self.b_exo)
         elif prior_type == 3:
-            self.prior = NormalDiffusePrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params)
+            self.prior = NormalDiffusePrior(self.yy, self.XX, self.lags, self.ncoeff_eq, self.prior_params, self.b_exo)
         
         # Storage for draws
         self.beta_draws = []
@@ -346,7 +348,6 @@ class BayesianVAR:
 
         return eta
     
-    
     def conditional_forecast(self, conditions: np.ndarray, fhor: int = 12, plot_forecast: bool = True, 
                              cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10, 
                              zero_line: bool = False):
@@ -405,4 +406,3 @@ class BayesianVAR:
             display(forecast_plot)
 
         return self.cond_forecasts, shock_record
-
