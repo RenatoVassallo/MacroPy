@@ -9,8 +9,7 @@ dist/
 
 #ignore local environment
 .env
-
-#ignore virtual environment
 .venv
 
+# specific folders
 classes/
