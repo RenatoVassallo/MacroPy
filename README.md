@@ -15,11 +15,11 @@ Whether you're forecasting GDP, analyzing the effects of shocks, or teaching VAR
 
 ## 📦 Key Features
 
-MacroPy includes robust functionality for:
+`MacroPy` includes robust functionality for:
 
-✅ APIs for data: FRED (St. Louis Fed) and Peruvian Central Bank
+✅ APIs for data: FRED (St. Louis Fed) and Peruvian Central Bank  
 ✅ Frequentist and Bayesian VAR estimation  
-✅ Structural impulse response functions and Forecast Error Variance Decomposition
+✅ Structural impulse response functions and Forecast Error Variance Decomposition  
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
 ✅ High-quality plots using `ggplot2`-style, ready for LaTeX or reports  
@@ -27,7 +27,6 @@ MacroPy includes robust functionality for:
 **Specifically for the `BayesianVAR` class:**
 
 - Minnesota, Normal-Wishart, and Normal-Diffuse priors  
-- Posterior sampling with burn-in and thinning  
 - Structural IRFs using Cholesky decomposition  
 - Support for block exogeneity (zero restrictions on lag structures)
 - Conditional forecasting à la Waggoner & Zha (1999)  
