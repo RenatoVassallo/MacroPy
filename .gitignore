@@ -13,3 +13,6 @@ dist/
 
 # specific folders
 classes/
+tutorials/tutorial_api.ipynb
+tutorials/tutorial_localprojections.ipynb
+tutorials/tutorial_svar_vs_lp.ipynb
