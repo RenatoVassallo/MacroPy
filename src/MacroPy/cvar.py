@@ -12,17 +12,49 @@ class ClassicVAR:
     def __init__(self, y: pd.DataFrame, lags: int = 1, constant: bool = True, timetrend: bool = False, 
                  bstrap: bool = False, nreps: int = 1000, hor: int = 20, fhor: int = 12, irf_1std: int = 1):
         """
-        Estimate Frequentist VAR model. IRFs bands are computed using either Monte Carlo (default) or bootstrap methods.
-        Parameters:
-        - y: DataFrame with time series data (must have a datetime index).
-        - lags: Number of lags to include in the VAR model.
-        - constant: Include a constant term in the model.
-        - timetrend: Include a time trend in the model.
-        - bstrap: Use bootstrap method for IRF estimation.
-        - nreps: Number of bootstrap repetitions.
-        - hor: Forecast horizon for IRF.
-        - fhor: Forecast horizon for VAR.
-        - irf_1std: If 1, use 1 standard deviation shocks; if 0, use unit shocks.
+        Estimate a classic (frequentist) Vector Autoregression (VAR) model and compute 
+        Impulse Response Functions (IRFs) with confidence bands.
+
+        Parameters
+        ----------
+        y : pd.DataFrame
+            Multivariate time series dataset. Must have a datetime index.
+        
+        lags : int, default=1
+            Number of lags to include in the VAR model.
+        
+        constant : bool, default=True
+            If True, includes an intercept (constant) term in the model.
+        
+        timetrend : bool, default=False
+            If True, includes a linear time trend in the model.
+        
+        bstrap : bool, default=False
+            If True, uses bootstrap sampling to estimate IRF confidence bands.
+            If False, uses Monte Carlo simulation based on estimated covariance.
+
+        nreps : int, default=1000
+            Number of repetitions for the IRF simulations (bootstrap or Monte Carlo).
+        
+        hor : int, default=20
+            Number of periods ahead to compute impulse response functions and FEVD.
+        
+        fhor : int, default=12
+            Forecast horizon used for out-of-sample forecasting (if applicable).
+        
+        irf_1std : int, default=1
+            Determines the type of shock used in the IRFs:
+            - 1: Use a one standard deviation structural shock.
+            - 0: Use a unit (1.0) structural shock.
+
+        Notes
+        -----
+        This class implements a classic OLS-based VAR estimation. IRFs are derived using
+        either bootstrapped resamples or draws from the asymptotic normal distribution
+        of the estimated coefficients. FEVD is computed via the Wold representation.
+
+        Use this class when you want transparent, academic VAR estimation with flexibility
+        in simulation-based inference for uncertainty.
         """
         if not isinstance(y, pd.DataFrame):
             raise ValueError("Input data 'y' must be a pandas DataFrame with a datetime index.")
@@ -82,7 +114,29 @@ class ClassicVAR:
         return beta_vec.reshape((ncoeff_eq, N), order='F')
 
 
-    def compute_irfs(self, plot_irfs: bool = False, cred_interval = 0.68):
+    def compute_irfs(self, plot_irfs: bool = False, cred_interval=0.68):
+        """
+        Compute impulse response functions (IRFs) for the estimated VAR model.
+
+        The method uses either bootstrap resampling or Monte Carlo simulation to generate
+        draws of the IRFs, depending on the `bstrap` flag. Structural shocks are identified
+        using a Cholesky decomposition of the residual covariance matrix, which imposes 
+        contemporaneous zero restrictions (recursive identification).
+
+        Parameters
+        ----------
+        plot_irfs : bool, default=False
+            If True, displays IRF plots with confidence bands.
+
+        cred_interval : float, default=0.68
+            Credible interval (e.g., 0.68 or 0.95) used to compute IRF confidence bands.
+
+        Returns
+        -------
+        ir_draws : np.ndarray
+            Array of shape (n_draws, horizon, n_variables, n_variables) containing simulated
+            IRFs for each structural shock.
+        """
         
         N, P, H = self.n_endo, self.lags, self.hor
         B = self.b_ols.reshape((self.ncoeff_eq, N), order='F')
