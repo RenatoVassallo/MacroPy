@@ -23,7 +23,7 @@ def generate_summary(settings):
     summary = f"""
 **MacroPy Toolbox for Macroeconometric Analysis in Python**  
 Developed by [{linkedin_text}]({linkedin_url}), Institute for Economic Analysis (IAE-CSIC)  
-Version 0.1.3, May 2025  
+Version 0.1.4, June 2025  
 
 ---
 
