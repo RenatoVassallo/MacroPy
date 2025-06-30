@@ -7,9 +7,9 @@ Built for researchers. Designed for clarity. Ready for publication.
 
 ## 🚀 What is MacroPy?
 
-**MacroPy** is a flexible, intuitive Python package for estimating **Bayesian** and **Frequentist** Vector Autoregressions (VARs), performing structural macroeconomic analysis, and producing professional-quality visualizations.
+MacroPy is a flexible and intuitive Python package designed for macroeconometric modeling and forecasting. While it originated with a focus on **Bayesian VARs**, it has evolved into a broader toolbox supporting structural analysis, **Smooth Local Projections** and seamless **API integrations** for macroeconomic data.
 
-Whether you're forecasting GDP, analyzing the effects of shocks, or teaching VARs, MacroPy gives you publication-ready results with minimal code and maximum rigor.
+Whether you’re forecasting GDP or tracing the effects of policy shocks, `MacroPy` delivers publication-ready results with minimal code and academic-grade rigor.
 
 ---
 
