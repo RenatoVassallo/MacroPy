@@ -1,6 +1,6 @@
 import numpy as np
 
-def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo=None):
+def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
     """Compute the Minnesota prior using a parameter dictionary, supporting block exogeneity."""
     mn_mean = prior_params.get("mn_mean", 1)
     lamda1 = prior_params.get("lamda1", 0.2)
@@ -57,7 +57,7 @@ def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo=None):
 
 
 
-def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo=None):
+def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
     """ Compute the Minnesota-Inverse Wishart prior. """
     ny = yy.shape[1]
     mn_prior = MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo)
@@ -71,7 +71,7 @@ def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo=None):
     return {"prior_type": 2, "b0": b0, "H": H, "Scale0": Scale0, "alpha0": alpha0}
     
 
-def NormalDiffusePrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo=None):
+def NormalDiffusePrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
     """ Compute the Minnesota-Inverse Wishart prior (diffuse version). """
     mn_prior = MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo)
     b0, H = mn_prior["b0"], mn_prior["H"]
