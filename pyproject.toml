@@ -1,7 +1,7 @@
 [project]
 name = "MacroPy"
 version = "0.1.4"
-description = "MacroPy Toolbox for Bayesian Macroeconometric Analysis in Python"
+description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 authors = [{ name = "Renato Vassallo", email = "renato.vassallo@bse.eu" }]
 readme = "README.md"
 requires-python = ">=3.11,<3.12"

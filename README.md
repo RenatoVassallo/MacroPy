@@ -1,6 +1,6 @@
 # 🧠 MacroPy
 
-**A Bayesian Toolbox for Macroeconometric Analysis in Python**  
+**A Toolbox for Macroeconometric Analysis in Python**  
 Built for researchers. Designed for clarity. Ready for publication.
 
 ---
@@ -90,5 +90,5 @@ The roadmap for future versions includes:
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2025). *MacroPy: A Bayesian Toolbox for Macroeconometrics in Python*, Version 0.1.4.  
+> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.4.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)
