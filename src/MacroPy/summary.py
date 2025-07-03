@@ -21,9 +21,9 @@ def generate_summary(settings):
 
     # === HEADER ===
     summary = f"""
-**MacroPy Toolbox for Macroeconometric Analysis in Python**  
-Developed by [{linkedin_text}]({linkedin_url}), Institute for Economic Analysis (IAE-CSIC)  
-Version 0.1.4, June 2025  
+**MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**  
+Developed by [{linkedin_text}]({linkedin_url}) - Institute for Economic Analysis (IAE-CSIC)  
+Version 0.1.5 - July 2025  
 
 ---
 
@@ -32,7 +32,8 @@ Version 0.1.4, June 2025
 - **Endogenous Variables**: {', '.join(settings.names)}  
 - **Exogenous Variables**: {'Constant' if settings.constant else ''} {'Trend' if settings.timetrend else ''}  
 - **Number of Lags**: {settings.lags}  
-- **Total Number of Coefficients to Estimate**: {settings.ncoeff}  
+- **Sample Period**: {settings.dates[settings.lags].date()} to {settings.dates[-1].date()} ({settings.yy.shape[0]} observations)
+- **Total Parameters Estimated**: {settings.ncoeff}
 """
 
     # === BAYESIAN SECTION (IF APPLICABLE) ===
@@ -40,9 +41,10 @@ Version 0.1.4, June 2025
         summary += f"""
 ---
 
-**MCMC Algorithm**: Gibbs Sampling  
+**Bayesian Estimation Settings**
+- **Posterior Simulation**: Gibbs Sampling
 - **Prior Type**: {settings.prior_name}  
-- **Iterations**: {settings.post_draws}  
+- **Total Draws**: {settings.post_draws}
 - **Burn-in**: {settings.burnin} ({settings.burnin/settings.post_draws:.0%})  
 """
 

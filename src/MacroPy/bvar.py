@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from typing import List, Optional, Dict, Union
 from IPython.display import display
 from numpy.linalg import inv, eigvals
 from numpy.random import multivariate_normal
@@ -11,39 +12,109 @@ from .plots import generate_coeff_plot, generate_irf_plots, generate_forecast_pl
 from .summary import generate_summary
 
 class BayesianVAR:
-    def __init__(self, y: pd.DataFrame, lags: int = 1, constant: bool = True, timetrend: bool = False, 
-                 prior_type: int = 1, prior_params: dict = {"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5},
-                 b_exo: np.ndarray = None , post_draws: int = 5000, burnin: float = 0.5, hor: int = 20, fhor: int = 12, irf_1std: int = 1):
+    def __init__(
+        self,
+        y: pd.DataFrame,
+        lags: int = 1,
+        constant: bool = True,
+        timetrend: bool = False,
+        prior_type: int = 1,
+        prior_params: dict = {
+            "mn_mean": 1,
+            "lamda1": 0.2,
+            "lamda2": 0.5,
+            "lamda3": 1,
+            "lamda4": 1e5
+        },
+        b_exo: np.ndarray = None,
+        post_draws: int = 5000,
+        burnin: float = 0.5,
+        hor: int = 20,
+        fhor: int = 12,
+        irf_1std: int = 1
+    ):        
+
         """
-        Bayesian Vector Autoregression (BVAR) model class.
+        BayesianVAR: A flexible Bayesian Vector Autoregression model for time series analysis.
 
-        This class implements a Bayesian VAR for multivariate time series analysis, allowing 
-        for different prior distributions and posterior simulation via Gibbs sampling. The model 
-        supports inclusion of a constant and deterministic time trend, and is suitable for tasks 
-        such as forecasting, impulse response analysis, and structural shock identification.
+        This class implements a Bayesian VAR framework for multivariate time series, supporting
+        multiple prior structures, posterior simulation via Gibbs sampling, and a range of tools 
+        for structural analysis including impulse responses, variance decomposition, and forecasting.
 
-        Parameters:
-            y (pd.DataFrame): Input time series data with a datetime index and variables in columns.
-            lags (int): Number of autoregressive lags (default is 1).
-            constant (bool): Whether to include a constant term (default is True).
-            timetrend (bool): Whether to include a deterministic time trend (default is False).
-            prior_type (int): Choice of prior:
-                1 = Minnesota Prior
-                2 = Normal-Wishart Prior
-                3 = Normal-Diffuse Prior
-            prior_params (dict): Dictionary of hyperparameters for the chosen prior.
+        Parameters
+        ----------
+        y : pd.DataFrame
+            Time series data with datetime index and one column per endogenous variable.
+        
+        lags : int, default=1
+            Number of lags to include in the VAR specification.
+        
+        constant : bool, default=True
+            Whether to include an intercept (constant) in the model.
+        
+        timetrend : bool, default=False
+            Whether to include a deterministic linear time trend.
+        
+        prior_type : int, default=1
+            Prior specification to use:
+                1 = Minnesota Prior (shrinkage on own and cross lags)
+                2 = Normal-Wishart Prior (conjugate prior for VAR)
+                3 = Normal-Diffuse Prior (non-informative)
+
+        prior_params (dict): Dictionary of hyperparameters for the chosen prior.
                 Default for Minnesota:
                     - mn_mean: Prior mean on first own lag
                     - lamda1: Own lag shrinkage
                     - lamda2: Cross lag shrinkage
                     - lamda3: Lag decay
                     - lamda4: Constant term variance
-            b_exo (np.ndarray): block exogeneity mask. Variable i does not depend on lagged values of variable j.
-            post_draws (int): Number of posterior draws including burn-in (default is 5000).
-            burnin (float): Proportion of draws to discard as burn-in (default is 0.5).
-            hor (int): Horizon for impulse response functions (default is 20).
-            fhor (int): Forecast horizon (default is 12).
-            irf_1std (int): Scale of structural shock for IRF (1 standard deviation, default is 1).
+
+        b_exo : np.ndarray, optional
+            Block exogeneity mask (n_endo x n_endo boolean array). If variable i does not depend
+            on lagged values of variable j, set b_exo[i, j] = 0. Allows partial system specification.
+
+        post_draws : int, default=5000
+            Total number of posterior draws (including burn-in).
+
+        burnin : float, default=0.5
+            Proportion of posterior draws to discard as burn-in (e.g., 0.5 = discard 50%).
+
+        hor : int, default=20
+            Number of periods for impulse response function (IRF) analysis.
+
+        fhor : int, default=12
+            Number of periods to forecast in unconditional and conditional forecasts.
+
+        irf_1std : int, default=1
+            Type of IRF shock scaling:
+                - 1 = 1 standard deviation shock
+                - 0 = unit shock in structural space (scaled by Cholesky factor)
+
+        Examples
+        --------
+        >>> from MacroPy import BayesianVAR
+        >>> import pandas as pd
+
+        >>> # Load time series data
+        >>> df = pd.read_csv("Macro_Data.csv", index_col=0, parse_dates=True)
+
+        >>> # Initialize BVAR model
+        >>> bvar = BayesianVAR(df)
+
+        >>> # Print model summary
+        >>> bvar.model_summary()
+
+        >>> # Sample posterior
+        >>> post_draws = bvar.sample_posterior(plot_coefficients=True)
+
+        >>> # Impulse response functions
+        >>> irfs_results = bvar.compute_irfs(plot_irfs=True)
+
+        >>> # Forecast error variance decomposition
+        >>> fevd_results = bvar.compute_fevd(plot_fevd=True)
+
+        >>> # Unconditional Forecasting
+        >>> fore_results = bvar.forecast(plot_forecast=True)
         """
         if not isinstance(y, pd.DataFrame):
             raise ValueError("Input data 'y' must be a pandas DataFrame with a datetime index.")
@@ -129,16 +200,24 @@ class BayesianVAR:
         """Reshape vectorized beta into coefficient matrix."""
         return beta_vec.reshape((ncoeff_eq, N), order='F')
 
-    def sample_posterior(self, plot_coefficients: bool = False):
+    def sample_posterior(self, plot_coefficients: bool = False) -> dict:
         """
         Draw posterior samples for VAR coefficients and variance-covariance matrix.
+        
         Ensures draws are stable (companion eigenvalues < 1).
+
+        Returns
+        -------
+            dict: A dictionary with keys "beta_draws" and "Sigma_draws", each containing posterior samples.
         """
         XtX = self.XX.T @ self.XX
         b_ols, Sigma_ols = self.b_ols, self.Sigma_ols
         b_prior, H_prior = self.prior["b0"], self.prior["H"]
         Scale0, alpha0 = self.prior.get("Scale0"), self.prior.get("alpha0")
         Sigma = Sigma_ols.copy()
+
+        self.beta_draws = []
+        self.Sigma_draws = []
 
         for _ in tqdm(range(self.post_draws), desc="Sampling Posterior"):
             Sigma_inv = inv(Sigma) if self.prior_type in [2, 3] else inv(Sigma_ols)
@@ -184,12 +263,30 @@ class BayesianVAR:
             if len(var_plots) > 2:
                 print("Note: Only showing first 2 lags of coefficients.")
 
+        return {
+            "beta_draws": self.beta_draws,
+            "Sigma_draws": self.Sigma_draws
+        }
 
-    def compute_irfs(self, plot_irfs: bool = False, cred_interval = 0.68):
+
+    def compute_irfs(self, plot_irfs: bool = False, cred_interval: Union[float, List[float]] = 0.68) -> np.ndarray:
         """
         Compute impulse response functions (IRFs) from posterior draws.
-        Each draw produces one IRF matrix of shape [horizon, variables, shocks].
+
+        Each posterior draw generates one IRF matrix of shape [horizon, variables, shocks].
+
+        Parameters
+        ----------
+            plot_irfs (bool): If True, plots IRFs with given credible intervals.
+            cred_interval (float or list): Credible interval(s) for IRF plots. E.g., 0.68 or [0.68, 0.95].
+
+        Returns
+        -------
+            np.ndarray: Array of shape [n_draws, horizon, variables, shocks], storing IRFs.
         """
+        if isinstance(cred_interval, float):
+            cred_interval = [cred_interval]
+    
         N, P, H = self.n_endo, self.lags, self.hor
         self.ir_draws = []
         n_draws = len(self.beta_draws)
@@ -233,26 +330,52 @@ class BayesianVAR:
             ir_plots = generate_irf_plots(self, cred_interval)
             for p in ir_plots:
                 display(p)
+
         return self.ir_draws
     
 
-    def compute_fevd(self, plot_fevd: bool = True, series_titles: list = None,
-                 shock_titles: list = None, title: str = None):
+    def compute_fevd(
+        self,
+        plot_fevd: bool = True,
+        series_titles: Optional[List[str]] = None,
+        shock_titles: Optional[List[str]] = None,
+        title: Optional[str] = None
+    ) -> Dict[str, Union[np.ndarray, None]]:
         """
-        Compute the Forecast Error Variance Decomposition (FEVD) from posterior draws
-        in a Bayesian VAR model.
+        Compute the Forecast Error Variance Decomposition (FEVD) from posterior draws of a Bayesian VAR model.
+
+        The FEVD quantifies the contribution of each structural shock to the forecast error variance 
+        of each variable over different horizons. Computation is based on orthogonalized impulse responses 
+        (via Cholesky decomposition) for each posterior draw.
+
+        Parameters
+        ----------
+        plot_fevd : bool, default=True
+            Whether to display the FEVD plots.
+
+        series_titles : list of str, optional
+            Custom names for the endogenous variables (for plotting purposes).
+
+        shock_titles : list of str, optional
+            Custom names for the structural shocks (for plotting purposes).
+
+        title : str, optional
+            Custom plot title.
 
         Returns
         -------
-        fevd : np.ndarray
-            Array of shape [horizon, shock, variable], containing the average FEVD
-            across posterior draws (in percentages).
+        dict
+            A dictionary containing:
+            - 'fevd' : np.ndarray of shape (horizon, shock, variable)
+                Posterior mean FEVD, expressed in percentage terms.
+            - 'fevd_draws' : np.ndarray of shape (n_draws, horizon, shock, variable)
+                Raw FEVD draws from each posterior sample.
         """
         N, P, H = self.n_endo, self.lags, self.hor
         n_draws = len(self.beta_draws)
 
-        # Storage for all FEVDs across draws
-        fevd_all = np.zeros((n_draws, H, N, N))  # [draw, horizon, shock, variable]
+        # Store FEVDs across draws: [draw, horizon, shock, variable]
+        fevd_draws = np.zeros((n_draws, H, N, N))
 
         for d in tqdm(range(n_draws), desc="Computing FEVD"):
             B = self.reshape_beta(self.beta_draws[d], self.ncoeff_eq, N)
@@ -262,9 +385,9 @@ class BayesianVAR:
             try:
                 S = np.linalg.cholesky(Sigma)
             except np.linalg.LinAlgError:
-                continue  # skip if non-PD
+                continue
 
-            # Wold representation multipliers
+            # Wold multipliers
             PSI = np.zeros((N, N, H))
             PSI[:, :, 0] = np.eye(N)
 
@@ -274,9 +397,8 @@ class BayesianVAR:
                 Bp[:, :, p] = B[p * N:(p + 1) * N, :].T
 
             for h in range(1, H):
-                for j in range(1, h + 1):
-                    if j <= P:
-                        PSI[:, :, h] += PSI[:, :, h - j] @ Bp[:, :, j - 1]
+                for j in range(1, min(P, h) + 1):
+                    PSI[:, :, h] += PSI[:, :, h - j] @ Bp[:, :, j - 1]
 
             for shock in range(N):
                 MSE = np.zeros((N, N, H))
@@ -293,93 +415,123 @@ class BayesianVAR:
 
                 for h in range(H):
                     FECD = MSE_shock[:, :, h] / MSE[:, :, h]
-                    fevd_all[d, h, shock, :] = 100 * np.diag(FECD)
+                    fevd_draws[d, h, shock, :] = 100 * np.diag(FECD)
 
-        # Average across posterior draws
-        self.fevd = np.nanmean(fevd_all, axis=0)  # shape: [horizon, shock, variable]
+        # Posterior average
+        self.fevd = np.nanmean(fevd_draws, axis=0)  # [horizon, shock, variable]
+        self.fevd_draws = fevd_draws  # Save raw draws for later use
 
         if plot_fevd:
             fevd_plot = generate_fevd_plot(self, series_titles, shock_titles, title)
             display(fevd_plot)
 
-        return self.fevd
+        return {
+            "fevd": self.fevd,
+            "fevd_draws": self.fevd_draws
+        }
                 
     
-    def forecast(self, fhor: int = 12, plot_forecast: bool = True, cred_interval: list = [0.68, 0.95],
-                 last_k: int = None, n_breaks: int = 10, zero_line: bool = False):
+    def forecast(
+        self,
+        fhor: int = 12,
+        plot_forecast: bool = True,
+        cred_interval: list = [0.68, 0.95],
+        last_k: int = None,
+        n_breaks: int = 10,
+        zero_line: bool = False
+    ) -> dict:
         """
-        Generate Bayesian forecasts using posterior draws of beta and Sigma.
-        
-        Parameters:
-            fhor (int): Forecast horizon (e.g., 12 quarters)
-            cred_interval (list): List of credible intervals to display (e.g., [0.68, 0.95])
-            last_k (int): If set, show only last_k historical periods + forecast. If None, show full history.
-            n_breaks (int): Number of x-axis breaks (year ticks).
-            zero_line (bool): Whether to include a horizontal zero line in plots.
+        Generate Bayesian forecasts from posterior draws of beta and Sigma.
 
-        Returns:
-            forecasts: np.ndarray of shape (n_draws, steps, n_endo)
+        Parameters
+        ----------
+        fhor : int
+            Forecast horizon (e.g., 12 quarters).
+        plot_forecast : bool
+            Whether to display the forecast fan chart.
+        cred_interval : list
+            List of credible intervals to display (e.g., [0.68, 0.95]).
+        last_k : int
+            Number of recent historical periods to display. If None, show all.
+        n_breaks : int
+            Number of x-axis ticks (typically years).
+        zero_line : bool
+            Whether to add a horizontal zero line in the plot.
+
+        Returns
+        -------
+        dict with:
+            - "forecast_draws": ndarray of shape (n_draws, fhor, n_endo), forecasts w/ shocks.
+            - "mean_forecasts": ndarray of shape (n_draws, fhor, n_endo), forecasts w/o shocks.
         """
-
         n_draws = len(self.beta_draws)
         n_endo = self.n_endo
         lags = self.lags
         k = self.ncoeff_eq
 
-        # Initialize forecast array
-        self.forecasts = np.zeros((n_draws, fhor, n_endo))
-        Y_history = self.yy[-lags:, :]  # shape (lags, n_endo)
+        self.forecasts = np.zeros((n_draws, fhor, n_endo))        # With shocks
+        self.mean_forecasts = np.zeros((n_draws, fhor, n_endo))   # No shocks
 
-        # Exogenous forecast matrix (e.g., constant term)
+        Y_history = self.yy[-lags:, :]  # Most recent lags
+
+        # Constant-only exogenous forecast matrix
         if self.constant:
-            Xexo_future = np.ones((fhor, 1))  # constant-only
+            Xexo_future = np.ones((fhor, 1))
         else:
-            Xexo_future = np.zeros((fhor, 0))  # no exogenous
+            Xexo_future = np.zeros((fhor, 0))
 
         for i in range(n_draws):
             beta_vec = self.beta_draws[i]
             Sigma = self.Sigma_draws[i]
+            B = self.reshape_beta(beta_vec, k, n_endo)
 
-            # Reshape beta
-            B = self.reshape_beta(beta_vec, k, n_endo)  # shape (k, n_endo)
-
-            # Initialize history (copy for forecast path)
+            # Initialize history (copy for forecasting)
             Y = Y_history.copy().tolist()
 
             for h in range(fhor):
+                # Lagged inputs
                 Y_lags = np.hstack([Y[-lag] for lag in range(1, lags + 1)])
                 X_t = Y_lags
+
                 if self.constant:
                     X_t = np.hstack([X_t, Xexo_future[h]])
 
-                # Compute mean forecast (no shock)
+                # Forecast mean (no shocks)
                 y_deterministic = X_t @ B
                 self.mean_forecasts[i, h, :] = y_deterministic
 
-                # Add stochastic component
+                # Add Gaussian disturbance
                 eps = multivariate_normal(mean=np.zeros(n_endo), cov=Sigma)
                 y_forecast = y_deterministic + eps
-
                 self.forecasts[i, h, :] = y_forecast
+
                 Y.append(y_forecast)
-                
+
         if plot_forecast:
-            forecast_plot = generate_forecast_plots(self, self.forecasts, cred_interval, last_k, n_breaks, zero_line, forecast_type="Unconditional")
+            forecast_plot = generate_forecast_plots(
+                self, self.forecasts, cred_interval,
+                last_k, n_breaks, zero_line, forecast_type="Unconditional"
+            )
             display(forecast_plot)
 
-        return self.forecasts
+        return {
+            "forecast_draws": self.forecasts,
+            "mean_forecasts": self.mean_forecasts
+        }
     
     
     def _solve_shocks(self, conditions, fmat, ortirf):
         """
         Solve for structural shocks (eta) such that the conditional forecast matches the desired path.
         
-        Parameters:
+        Parameters
+        ----------
             conditions (steps x n_endo): matrix with np.nan for unconstrained
             fmat (steps x n_endo): baseline forecast
             ortirf (steps x n_endo x n_endo): orthogonal IRFs
 
-        Returns:
+        Returns
+        -------
             eta (steps x n_endo): structural shocks
         """
         steps, n = conditions.shape
@@ -421,57 +573,65 @@ class BayesianVAR:
                              cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10, 
                              zero_line: bool = False):
         """
-        Generate conditional forecasts using structural shocks.
+        Generate conditional forecasts using structural shocks (Waggoner & Zha-style).
 
-        Parameters:
-            conditions (np.ndarray): (fhor x n_endo) matrix with NaNs where no condition is imposed
-            fhor (int): Forecast horizon
+        Parameters
+        ----------
+            conditions (np.ndarray): Array of shape (fhor, n_endo), with NaNs for unrestricted values
+                                    and numeric values for imposed paths.
+            fhor (int): Forecast horizon.
+            plot_forecast (bool): Whether to display the resulting fan chart.
+            cred_interval (list): Credible intervals to display (e.g., [0.68, 0.95]).
+            last_k (int): If set, display only the last_k periods of history + forecast.
+            n_breaks (int): Number of x-axis breaks (e.g., years).
+            zero_line (bool): Whether to include a horizontal zero line in plots.
 
-        Returns:
-            conditional_forecast: (draws, fhor, n_endo)
-            shock_record: (draws, fhor, n_endo)
+        Returns
+        -------
+            cond_forecasts (np.ndarray): Shape (n_draws, fhor, n_endo), conditional forecasts.
+            shock_record (np.ndarray): Shape (n_draws, fhor, n_endo), identified shocks to meet conditions.
         """
+        n_draws = self.n_draws
         n_endo = self.n_endo
+        self.cond_forecasts = np.zeros((n_draws, fhor, n_endo))
+        shock_record = np.zeros((n_draws, fhor, n_endo))
 
-        # === Assume no exogenous variables beyond constant ===
-        data_exo_a = np.zeros((self.yy.shape[0], 0))
-        data_exo_p = np.zeros((fhor, 0))
-
+        # Handle constant (as exogenous term)
         if self.constant:
-            data_exo_a = np.hstack([np.ones((self.yy.shape[0], 1)), data_exo_a])
-            data_exo_p = np.hstack([np.ones((fhor, 1)), data_exo_p])
+            data_exo_p = np.ones((fhor, 1))  # constant term
+        else:
+            data_exo_p = np.zeros((fhor, 0))
 
-        # === Initialize outputs ===
-        shock_record = np.zeros((self.n_draws, fhor, n_endo))
-
-        # Compute IRFs if not already available
+        # Compute IRFs if not yet available
         if not hasattr(self, 'ir_draws') or len(self.ir_draws) == 0:
             self.compute_irfs(plot_irfs=False)
 
-        for i in range(self.n_draws):
-            # Forecasts without shocks
-            fmat = self.mean_forecasts[i]  # shape (fhor, n_endo)
+        for i in range(n_draws):
+            fmat = self.mean_forecasts[i]              # mean forecast (no shocks)
+            ortirf = self.ir_draws[i][:fhor]           # impulse responses: [h, y, shock]
 
-            # IRFs (ortho)
-            ortirf = self.ir_draws[i][:fhor]  # shape (fhor, n_endo, n_endo)
-
-            # Solve for shocks to meet conditions
-            eta = self._solve_shocks(conditions, fmat, ortirf)
+            # Solve for structural shocks that meet the imposed conditions
+            eta = self._solve_shocks(conditions, fmat, ortirf)  # shape: (fhor * n_endo,)
             eta = eta.reshape(fhor, n_endo)
 
-            # Conditional forecast: fmat + contribution of eta via IRFs
+            # Build conditional forecast using those shocks
             cdforecast = np.zeros((fhor, n_endo))
-            for jj in range(fhor):
-                shock_contrib = np.zeros(n_endo)
-                for kk in range(jj + 1):
-                    shock_contrib += ortirf[jj - kk, :, :] @ eta[kk, :]
-                cdforecast[jj, :] = fmat[jj, :] + shock_contrib
+            for h in range(fhor):
+                contrib = np.zeros(n_endo)
+                for j in range(h + 1):
+                    contrib += ortirf[h - j] @ eta[j]
+                cdforecast[h] = fmat[h] + contrib
 
-            self.cond_forecasts[i, :, :] = cdforecast
-            shock_record[i, :, :] = eta
-            
+            # Store forecast and shocks
+            self.cond_forecasts[i] = cdforecast
+            shock_record[i] = eta
+
+        # Plot forecast fan chart
         if plot_forecast:
-            forecast_plot = generate_forecast_plots(self, self.cond_forecasts, cred_interval, last_k, n_breaks, zero_line, forecast_type="Conditional")
+            forecast_plot = generate_forecast_plots(
+                self, self.cond_forecasts, cred_interval, last_k,
+                n_breaks, zero_line, forecast_type="Conditional"
+            )
             display(forecast_plot)
 
         return self.cond_forecasts, shock_record
