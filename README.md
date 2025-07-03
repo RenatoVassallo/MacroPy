@@ -39,7 +39,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.4/macropy-0.1.4-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.5/macropy-0.1.5-py3-none-any.whl
 ```
 
 ---
@@ -52,13 +52,13 @@ from MacroPy import BayesianVAR
 # Estimate a BVAR(4) with standard settings
 bvar = BayesianVAR(df, lags=4, hor=24, post_draws=50000)
 bvar.model_summary()
-bvar.sample_posterior(plot_coefficients=True)
+post_draws = bvar.sample_posterior(plot_coefficients=True)
 
 # IRFs with 68% and 95% credible intervals
-irfs = bvar.compute_irfs(plot_irfs=True, cred_interval=[0.68, 0.95])
+irfs_results = bvar.compute_irfs(plot_irfs=True, cred_interval=[0.68, 0.95])
 
 # Forecast with fan chart
-forecasts = bvar.forecast(fhor=12, plot_forecast=True, cred_interval=[0.90, 0.60, 0.30])
+forecasts_results = bvar.forecast(fhor=12, plot_forecast=True, cred_interval=[0.90, 0.60, 0.30])
 ```
 
 ---
@@ -90,5 +90,5 @@ The roadmap for future versions includes:
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.4.  
+> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.5.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)
