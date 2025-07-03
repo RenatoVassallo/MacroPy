@@ -1,6 +1,6 @@
 [project]
 name = "MacroPy"
-version = "0.1.4"
+version = "0.1.5"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 authors = [{ name = "Renato Vassallo", email = "renato.vassallo@bse.eu" }]
 readme = "README.md"
