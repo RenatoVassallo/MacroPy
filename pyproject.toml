@@ -1,21 +1,47 @@
 [project]
 name = "MacroPy"
-version = "0.1.5"
+version = "0.1.6"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
-authors = [{ name = "Renato Vassallo", email = "renato.vassallo@bse.eu" }]
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
-dependencies = [
-    "numpy==2.2.3",
-    "pandas==2.2.3",
-    "scipy==1.15.2",
-    "tqdm==4.67.1",
-    "requests==2.32.3",
-    "fredapi==0.5.2",
-    "lxml==5.3.1",
-    "plotnine==0.14.5",
-    "mizani==0.13.1",
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Renato Vassallo", email = "renato.vassallo@bse.eu" }]
+keywords = [
+    "macroeconometrics",
+    "bayesian-var",
+    "panel-var",
+    "local-projections",
+    "forecasting",
+    "economics",
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=2.2,<3",
+    "pandas>=2.2,<3",
+    "scipy>=1.15",
+    "tqdm>=4.67",
+    "requests>=2.32",
+    "fredapi>=0.5",
+    "lxml>=5.3",
+    "plotnine>=0.14,<0.16",
+    "mizani>=0.13,<0.15",
+    "ipython>=8",
+    "pycountry>=23",
+]
+
+[project.urls]
+Homepage = "https://github.com/RenatoVassallo/MacroPy"
+Repository = "https://github.com/RenatoVassallo/MacroPy"
+Issues = "https://github.com/RenatoVassallo/MacroPy/issues"
 
 [dependency-groups]
 dev = [
@@ -25,11 +51,13 @@ dev = [
     "matplotlib>=3.10.1",
     "python-dotenv>=1.1.0",
     "seaborn>=0.13.2",
-    "xlsxwriter==3.2.2",
-    "openpyxl==3.1.5",
+    "xlsxwriter>=3.2,<4",
+    "openpyxl>=3.1,<4",
 ]
 
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["src"]
