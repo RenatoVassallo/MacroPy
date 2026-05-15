@@ -17,7 +17,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 
 `MacroPy` includes robust functionality for:
 
-✅ APIs for data: FRED (St. Louis Fed) and Peruvian Central Bank  
+✅ APIs for data: FRED (St. Louis Fed), BIS and Peruvian Central Bank  
 ✅ Frequentist and Bayesian VAR estimation  
 ✅ Structural impulse response functions and Forecast Error Variance Decomposition  
 ✅ Unconditional and conditional forecasts  
@@ -90,5 +90,5 @@ The roadmap for future versions includes:
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.5.  
+> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.6.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)
