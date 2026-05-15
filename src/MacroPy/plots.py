@@ -200,6 +200,90 @@ def generate_coeff_plot(self):
     return const_plot, var_plots
 
 
+def generate_panel_coeff_plots(self):
+    """
+    Plot posterior distributions for pooled mean lag coefficients and the pooling parameter.
+    """
+    if not hasattr(self, "bbar_draws") or len(self.bbar_draws) == 0:
+        raise ValueError("Posterior draws for pooled mean coefficients are not available.")
+
+    bbar_array = np.asarray(self.bbar_draws)
+    n_draws, n_coeffs = bbar_array.shape
+
+    labels = []
+    equations = []
+    lags_list = []
+    for eq_idx, eq_name in enumerate(self.names):
+        for lag in range(1, self.lags + 1):
+            for var_idx in range(self.n_endo):
+                labels.append(f"bbar_{eq_idx + 1},{var_idx + 1} (lag {lag})")
+                equations.append(eq_name)
+                lags_list.append(lag)
+
+    if len(labels) != n_coeffs:
+        raise ValueError("Mismatch between `bbar_draws` and pooled mean coefficient labels.")
+
+    df = pd.DataFrame(bbar_array, columns=labels).melt(var_name="Coefficient", value_name="Value")
+    df["Equation"] = np.repeat(equations, n_draws)
+    df["Lag"] = np.repeat(lags_list, n_draws)
+
+    lag_plots = []
+    for lag in range(1, self.lags + 1):
+        df_lag = df[df["Lag"] == lag].copy()
+        df_lag["facet_id"] = df_lag["Coefficient"] + " -> " + df_lag["Equation"]
+        medians = df_lag.groupby("facet_id")["Value"].median().reset_index()
+        medians["label"] = medians["Value"].round(2).astype(str)
+
+        plot = (
+            ggplot(df_lag, aes(x="Value")) +
+            geom_density(fill="#4c78a8", alpha=0.45) +
+            geom_vline(data=medians, mapping=aes(xintercept="Value"), linetype="dashed", color="#c44e52") +
+            geom_text(
+                data=medians,
+                mapping=aes(x="Value", y=0, label="label"),
+                color="#c44e52",
+                va="bottom",
+                ha="left",
+                nudge_y=0.01,
+                size=9
+            ) +
+            facet_wrap("~facet_id", nrow=self.n_endo, ncol=self.n_endo, scales="free") +
+            labs(title=f"Pooled Mean Coefficients (Lag {lag})") +
+            theme(
+                figure_size=(self.n_endo * 4, self.n_endo * 2.6),
+                panel_background=element_rect(fill="white"),
+                plot_background=element_rect(fill="white"),
+                strip_background=element_rect(fill="white"),
+                panel_grid_major=element_line(color="grey", linetype="dashed", size=0.5),
+                panel_grid_minor=element_blank(),
+                strip_text=element_text(size=9),
+                axis_line_x=element_line(color="black", size=1),
+                axis_line_y=element_line(color="black", size=1),
+                legend_position="none"
+            )
+        )
+        lag_plots.append(plot)
+
+    lambda_df = pd.DataFrame({"Lambda": np.asarray(self.lambda_draws)})
+    lambda_plot = (
+        ggplot(lambda_df, aes(x="Lambda")) +
+        geom_density(fill="#dd8452", alpha=0.45) +
+        labs(title="Posterior Distribution of the Pooling Parameter") +
+        theme(
+            figure_size=(5, 3),
+            panel_background=element_rect(fill="white"),
+            plot_background=element_rect(fill="white"),
+            panel_grid_major=element_line(color="grey", linetype="dashed", size=0.5),
+            panel_grid_minor=element_blank(),
+            axis_line_x=element_line(color="black", size=1),
+            axis_line_y=element_line(color="black", size=1),
+            legend_position="none"
+        )
+    )
+
+    return lambda_plot, lag_plots
+
+
 
 def generate_irf_plots(self, cred_interval: list = [0.68, 0.95]):
     """
@@ -218,6 +302,8 @@ def generate_irf_plots(self, cred_interval: list = [0.68, 0.95]):
 
     # Label for type of shock
     shock_type_label = "unit" if self.irf_1std == 0 else "1 s.d."
+
+    plot_label = getattr(self, "plot_label", None)
 
     for shock in range(N):
         # Collect responses to this shock
@@ -253,7 +339,11 @@ def generate_irf_plots(self, cred_interval: list = [0.68, 0.95]):
             geom_hline(yintercept=0, linetype="dashed", color="black") +
             facet_wrap("~Variable", ncol=ncols, scales="free") +
             labs(
-                title=f"Impulse Responses to a {shock_type_label} shock in {self.names[shock]}",
+                title=(
+                    f"Impulse Responses to a {shock_type_label} shock in {self.names[shock]}"
+                    if plot_label is None
+                    else f"Impulse Responses to a {shock_type_label} shock in {self.names[shock]} ({plot_label})"
+                ),
                 y="Response",
                 x="Horizon"
             ) +

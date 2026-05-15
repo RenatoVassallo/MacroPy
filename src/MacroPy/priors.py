@@ -77,3 +77,71 @@ def NormalDiffusePrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lam
     b0, H = mn_prior["b0"], mn_prior["H"]
     
     return {"prior_type": 3, "b0": b0, "H": H}
+
+
+def _panel_dummy_matrices(sigma, lags, tightness):
+    """Construct the Banbura-style dummy matrices used in the Mumtaz panel VAR code."""
+    sigma = np.asarray(sigma, dtype=float).reshape(-1)
+    if tightness <= 0:
+        raise ValueError("`tightness` must be strictly positive.")
+
+    n_endo = sigma.size
+    lag_penalty = np.diag(np.arange(1, lags + 1, dtype=float))
+
+    yd = np.vstack(
+        [
+            np.diag(sigma / tightness),
+            np.zeros((n_endo * (lags - 1), n_endo)),
+            np.diag(sigma),
+        ]
+    )
+    xd = np.vstack(
+        [
+            np.kron(lag_penalty, np.diag(sigma) / tightness),
+            np.zeros((n_endo, n_endo * lags)),
+        ]
+    )
+
+    return yd, xd
+
+
+def HierarchicalPanelPrior(y_unit, lags, tightness=1.0):
+    """
+    Compute the hierarchical lag-coefficient prior used in Mumtaz's panel VAR code.
+
+    The prior is implemented through dummy observations and returns the implied prior
+    mean and covariance for the unit-specific lag coefficients.
+    """
+    y_unit = np.asarray(y_unit, dtype=float)
+    if y_unit.ndim != 2:
+        raise ValueError("`y_unit` must be a 2-dimensional array.")
+
+    T, n_endo = y_unit.shape
+    if T <= lags:
+        raise ValueError("Not enough observations to build the requested panel prior.")
+
+    sigma = np.zeros(n_endo)
+    for idx in range(n_endo):
+        y_series = y_unit[:, idx]
+        x_lags = np.column_stack([y_series[lags - lag:T - lag] for lag in range(1, lags + 1)])
+        x_lags = np.hstack((x_lags, np.ones((T - lags, 1))))
+        y_target = y_series[lags:]
+        coeffs = np.linalg.lstsq(x_lags, y_target, rcond=None)[0]
+        residuals = y_target - x_lags @ coeffs
+        dof = y_target.shape[0] - x_lags.shape[1]
+        if dof <= 0:
+            raise ValueError("Too few observations to calibrate the panel prior.")
+        sigma[idx] = np.sqrt((residuals.T @ residuals) / dof)
+
+    yd, xd = _panel_dummy_matrices(sigma, lags, tightness)
+    b0 = np.linalg.lstsq(xd, yd, rcond=None)[0].flatten(order="F")
+    H = np.kron(np.diag(sigma ** 2), np.linalg.pinv(xd.T @ xd))
+    H_inv = np.linalg.pinv(H)
+
+    return {"b0": b0, "H": H, "H_inv": H_inv, "sigma_scale": sigma}
+
+
+def DiffusePanelExogenousPrior(n_exo, n_endo, precision=1e-4):
+    """Diffuse Gaussian prior for unit-specific intercept and exogenous coefficients."""
+    size = int(n_exo) * int(n_endo)
+    return {"b0": np.zeros(size), "H_inv": np.eye(size) * precision}
