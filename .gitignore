@@ -1,15 +1,25 @@
-# Ignore Python cache files
+# Python build / cache
 __pycache__/
 *.py[cod]
+*.pyc
 *.egg-info/
 .ipynb_checkpoints/
-*.pyc
+build/
 dist/
+
+# OS junk
 .DS_Store
 
-#ignore local environment
+# Environments and secrets
 .env
 .venv
+.venv*/
 
-# specific folders
+# Editor / tooling state
+.claude/
+.idea/
+.vscode/
+
+# Local research / course material that lives alongside the package
 classes/
+CAF/
