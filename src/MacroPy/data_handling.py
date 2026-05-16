@@ -2,38 +2,62 @@ import numpy as np
 import pandas as pd
 
 
-def prepare_data(YY, lags, constant=True, timetrend=False):
+def prepare_data(YY, lags, constant=True, timetrend=False, exog=None):
     """
-    Organizes the data in the form of Y = XB + E.
-    
-    Parameters:
-        YY (numpy.ndarray): The input time series data.
-        lags (int): Number of lags.
-        constant (bool): Whether to include a constant column.
-        timetrend (bool): Whether to include a time trend column.
-    
-    Returns:
-        YYact (numpy.ndarray): The dependent variable matrix.
-        XXact (numpy.ndarray): The independent variable matrix including lagged values and optional constants/trends.
+    Organize the data in the form of Y = XB + E.
+
+    Parameters
+    ----------
+    YY : numpy.ndarray
+        The input time series data.
+    lags : int
+        Number of lags.
+    constant : bool
+        Whether to include a constant column.
+    timetrend : bool
+        Whether to include a time trend column.
+    exog : numpy.ndarray, optional
+        Additional exogenous regressors aligned with `YY` (shape (T, K)). They
+        are appended after the constant/trend block. Pre-sample observations
+        are dropped to match the lagged Y matrix.
+
+    Returns
+    -------
+    YYact : numpy.ndarray
+        The dependent variable matrix.
+    XXact : numpy.ndarray
+        The independent variable matrix. Column layout per equation:
+        ``[lag-1 vars, ..., lag-P vars, constant?, trend?, exog cols...]``.
     """
-    
+
     T0 = lags  # Pre-sample size
     nv = YY.shape[1]  # Number of variables
     nobs = YY.shape[0] - T0  # Number of observations
-    
+
     # Actual observations
     YYact = YY[T0:T0 + nobs, :]
     XXact = np.zeros((nobs, nv * lags))
-    
+
     for i in range(1, lags + 1):
         XXact[:, (i - 1) * nv:i * nv] = YY[T0 - i:T0 + nobs - i, :]
-    
+
     if constant:
         XXact = np.hstack((XXact, np.ones((nobs, 1))))
-    
+
     if timetrend:
         XXact = np.hstack((XXact, np.arange(1, nobs + 1).reshape(-1, 1)))
-    
+
+    if exog is not None:
+        exog_arr = np.asarray(exog, dtype=float)
+        if exog_arr.ndim == 1:
+            exog_arr = exog_arr.reshape(-1, 1)
+        if exog_arr.shape[0] != YY.shape[0]:
+            raise ValueError(
+                "`exog` must have the same number of rows as `YY` "
+                f"(got {exog_arr.shape[0]} vs {YY.shape[0]})."
+            )
+        XXact = np.hstack((XXact, exog_arr[T0:T0 + nobs, :]))
+
     return YYact, XXact
 
 

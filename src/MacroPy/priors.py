@@ -29,9 +29,16 @@ def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1"
     # Prior variance matrix H
     H = np.zeros((ncoeff_eq * N, ncoeff_eq * N))
 
+    # Deterministic/exogenous positions per equation (constant, trend, user
+    # exog). They sit after the lag block and all receive a loose
+    # Normal(0, (std_i * lamda4)^2) prior so the likelihood drives the
+    # posterior.
+    n_exo_positions = ncoeff_eq - N * lags
+
     for i in range(N):  # equation i
-        constIdx = (i + 1) * ncoeff_eq - 1
-        H[constIdx, constIdx] = (std[i] * lamda4) ** 2
+        for e in range(n_exo_positions):
+            exoIdx = i * ncoeff_eq + N * lags + e
+            H[exoIdx, exoIdx] = (std[i] * lamda4) ** 2
 
         for lag in range(1, lags + 1):
             for j in range(N):  # variable j

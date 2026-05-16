@@ -8,7 +8,13 @@ from numpy.random import multivariate_normal
 from scipy.stats import invwishart
 from .data_handling import prepare_data, estimate_ols
 from .priors import MinnesotaPrior, NormalWishartPrior, NormalDiffusePrior
-from .plots import generate_coeff_plot, generate_irf_plots, generate_forecast_plots, generate_fevd_plot
+from .plots import (
+    generate_coeff_plot,
+    generate_irf_plots,
+    generate_forecast_plots,
+    generate_fevd_plot,
+    generate_exog_coeff_plot,
+)
 from .summary import generate_summary
 
 class BayesianVAR:
@@ -27,12 +33,13 @@ class BayesianVAR:
             "lamda4": 1e5
         },
         b_exo: np.ndarray = None,
+        exog: Optional[pd.DataFrame] = None,
         post_draws: int = 5000,
         burnin: float = 0.5,
         hor: int = 20,
         fhor: int = 12,
         irf_1std: int = 1
-    ):        
+    ):
 
         """
         BayesianVAR: A flexible Bayesian Vector Autoregression model for time series analysis.
@@ -72,6 +79,13 @@ class BayesianVAR:
         b_exo : np.ndarray, optional
             Block exogeneity mask (n_endo x n_endo boolean array). If variable i does not depend
             on lagged values of variable j, set b_exo[i, j] = 0. Allows partial system specification.
+
+        exog : pd.DataFrame, optional
+            Additional exogenous regressors (e.g., time dummies, oil prices). Must share its
+            index with `y`. Each column is appended to every equation after the constant and
+            trend, and receives a loose Minnesota prior so the likelihood drives the posterior.
+            For forecasting, future values default to zero; pass `future_exog` to `forecast`
+            to override.
 
         post_draws : int, default=5000
             Total number of posterior draws (including burn-in).
@@ -118,12 +132,12 @@ class BayesianVAR:
         """
         if not isinstance(y, pd.DataFrame):
             raise ValueError("Input data 'y' must be a pandas DataFrame with a datetime index.")
-        
+
         self.names = y.columns
         self.dates = y.index   # Store original dates
         self.y = y.to_numpy()  # Convert DataFrame to NumPy array
         self.lags = lags
-        self.n_endo = self.y.shape[1]  
+        self.n_endo = self.y.shape[1]
         self.constant = constant
         self.timetrend = timetrend
         self.prior_type = prior_type
@@ -138,14 +152,34 @@ class BayesianVAR:
         self.mean_forecasts = np.zeros((self.n_draws, self.fhor, self.n_endo))  # Forecasts without shocks
         self.forecasts = None      # With shocks
         self.cond_forecasts = np.zeros((self.n_draws, fhor, self.n_endo))
-        
-        # Number of exogenous variables and coefficients 
-        self.n_exo = int(constant) + int(timetrend)
+
+        # Validate and store user-supplied exogenous regressors
+        self.exog_names: List[str] = []
+        if exog is None:
+            self.exog = None
+            self.n_exog_user = 0
+        else:
+            if isinstance(exog, pd.Series):
+                exog = exog.to_frame()
+            if not isinstance(exog, pd.DataFrame):
+                raise ValueError("`exog` must be a pandas DataFrame or Series aligned with `y`.")
+            if not exog.index.equals(y.index):
+                raise ValueError("`exog.index` must match `y.index` exactly.")
+            if exog.isna().any().any():
+                raise ValueError("`exog` cannot contain missing values.")
+            self.exog_names = list(map(str, exog.columns))
+            self.exog = exog.to_numpy(dtype=float)
+            self.n_exog_user = self.exog.shape[1]
+
+        # Number of exogenous variables and coefficients
+        self.n_exo = int(constant) + int(timetrend) + self.n_exog_user
         self.ncoeff_eq = self.n_endo * self.lags + self.n_exo
         self.ncoeff = self.ncoeff_eq * self.n_endo
-        
+
         # Organize data into YX format
-        self.yy, self.XX = prepare_data(self.y, self.lags, self.constant, self.timetrend)
+        self.yy, self.XX = prepare_data(
+            self.y, self.lags, self.constant, self.timetrend, self.exog
+        )
         
         # Adjust dates to match YYact (accounting for lags)
         self.yy_dates = self.dates[self.lags:]
@@ -175,6 +209,42 @@ class BayesianVAR:
     def model_summary(self):
         """Print a summary of the Bayesian VAR model."""
         display(generate_summary(self))
+
+    def plot_exog_posteriors(
+        self,
+        bins: int = 30,
+        ncol: int = None,
+        series_titles: list = None,
+        palette: list = None,
+    ):
+        """
+        Display marginal posterior histograms of the user-supplied exogenous coefficients.
+
+        One panel per equation in the system (auto-arranged into a balanced
+        grid), with the posteriors of every exogenous regressor overlaid as
+        semi-transparent histograms with a shared color legend.
+
+        Parameters
+        ----------
+        bins : int, default=30
+            Number of histogram bins.
+        ncol : int, optional
+            Override the auto-computed number of columns in the facet grid.
+        series_titles : list of str, optional
+            Equation titles to display instead of ``self.names``.
+        palette : list of str, optional
+            Hex colors for the exogenous regressors (cycled if needed).
+
+        Returns
+        -------
+        plotnine.ggplot
+            The plot object (also rendered inline via IPython display).
+        """
+        plot = generate_exog_coeff_plot(
+            self, bins=bins, ncol=ncol, series_titles=series_titles, palette=palette,
+        )
+        display(plot)
+        return plot
     
     @staticmethod
     def is_stable(Bcomp):
@@ -185,14 +255,17 @@ class BayesianVAR:
     def build_companion_matrix(B, N, P):
         """
         Construct the VAR companion matrix from coefficient matrix B.
-        Assumes B has shape [(N * P + 1), N], with the constant as the last row.
+
+        Assumes the first ``N * P`` rows of B hold the lag coefficients and any
+        remaining rows correspond to deterministic / exogenous regressors that
+        do not enter the companion form.
         """
         Bcomp = np.zeros((N * P, N * P))
-        Bcomp[:N, :] = B[:-1, :].T  # exclude last row (constant)
-        
+        Bcomp[:N, :] = B[:N * P, :].T  # drop the trailing exogenous rows
+
         if P > 1:
             Bcomp[N:, :-N] = np.eye(N * (P - 1))
-        
+
         return Bcomp
 
     @staticmethod
@@ -431,6 +504,45 @@ class BayesianVAR:
         }
                 
     
+    def _build_future_exo(self, fhor: int, future_exog: Optional[pd.DataFrame] = None) -> np.ndarray:
+        """
+        Build the (fhor, n_exo) regressor matrix used for forecasting.
+
+        Layout matches ``prepare_data``: constant?, trend?, user exog columns.
+        For user-supplied exog, future values default to zeros (a natural
+        choice for event dummies after the event window).
+        """
+        blocks = []
+        if self.constant:
+            blocks.append(np.ones((fhor, 1)))
+        if self.timetrend:
+            nobs = self.yy.shape[0]
+            blocks.append(np.arange(nobs + 1, nobs + fhor + 1, dtype=float).reshape(-1, 1))
+
+        if self.n_exog_user > 0:
+            if future_exog is None:
+                blocks.append(np.zeros((fhor, self.n_exog_user)))
+            else:
+                if isinstance(future_exog, pd.DataFrame):
+                    missing = [c for c in self.exog_names if c not in future_exog.columns]
+                    if missing:
+                        raise ValueError(f"`future_exog` is missing exog columns: {missing}")
+                    fe_arr = future_exog[self.exog_names].to_numpy(dtype=float)
+                else:
+                    fe_arr = np.asarray(future_exog, dtype=float)
+                    if fe_arr.ndim == 1:
+                        fe_arr = fe_arr.reshape(-1, 1)
+                if fe_arr.shape != (fhor, self.n_exog_user):
+                    raise ValueError(
+                        f"`future_exog` must have shape ({fhor}, {self.n_exog_user}); "
+                        f"got {fe_arr.shape}."
+                    )
+                blocks.append(fe_arr)
+
+        if not blocks:
+            return np.zeros((fhor, 0))
+        return np.hstack(blocks)
+
     def forecast(
         self,
         fhor: int = 12,
@@ -438,7 +550,8 @@ class BayesianVAR:
         cred_interval: list = [0.68, 0.95],
         last_k: int = None,
         n_breaks: int = 10,
-        zero_line: bool = False
+        zero_line: bool = False,
+        future_exog: Optional[pd.DataFrame] = None,
     ) -> dict:
         """
         Generate Bayesian forecasts from posterior draws of beta and Sigma.
@@ -457,6 +570,11 @@ class BayesianVAR:
             Number of x-axis ticks (typically years).
         zero_line : bool
             Whether to add a horizontal zero line in the plot.
+        future_exog : pd.DataFrame, optional
+            Future values for user-supplied exogenous regressors. Required only
+            if you want non-zero exog values over the forecast horizon (e.g.
+            extending an oil-price path); for event dummies, leaving this as
+            None correctly yields zeros after the event.
 
         Returns
         -------
@@ -473,12 +591,7 @@ class BayesianVAR:
         self.mean_forecasts = np.zeros((n_draws, fhor, n_endo))   # No shocks
 
         Y_history = self.yy[-lags:, :]  # Most recent lags
-
-        # Constant-only exogenous forecast matrix
-        if self.constant:
-            Xexo_future = np.ones((fhor, 1))
-        else:
-            Xexo_future = np.zeros((fhor, 0))
+        Xexo_future = self._build_future_exo(fhor, future_exog)
 
         for i in range(n_draws):
             beta_vec = self.beta_draws[i]
@@ -492,8 +605,7 @@ class BayesianVAR:
                 # Lagged inputs
                 Y_lags = np.hstack([Y[-lag] for lag in range(1, lags + 1)])
                 X_t = Y_lags
-
-                if self.constant:
+                if Xexo_future.shape[1] > 0:
                     X_t = np.hstack([X_t, Xexo_future[h]])
 
                 # Forecast mean (no shocks)
@@ -569,9 +681,9 @@ class BayesianVAR:
 
         return eta
     
-    def conditional_forecast(self, conditions: np.ndarray, fhor: int = 12, plot_forecast: bool = True, 
-                             cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10, 
-                             zero_line: bool = False):
+    def conditional_forecast(self, conditions: np.ndarray, fhor: int = 12, plot_forecast: bool = True,
+                             cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10,
+                             zero_line: bool = False, future_exog: Optional[pd.DataFrame] = None):
         """
         Generate conditional forecasts using structural shocks (Waggoner & Zha-style).
 
@@ -596,11 +708,13 @@ class BayesianVAR:
         self.cond_forecasts = np.zeros((n_draws, fhor, n_endo))
         shock_record = np.zeros((n_draws, fhor, n_endo))
 
-        # Handle constant (as exogenous term)
-        if self.constant:
-            data_exo_p = np.ones((fhor, 1))  # constant term
-        else:
-            data_exo_p = np.zeros((fhor, 0))
+        # Future deterministic + exog block (consistent with .forecast())
+        data_exo_p = self._build_future_exo(fhor, future_exog)
+
+        # Recompute mean_forecasts so they reflect the requested fhor + future_exog
+        # (the base mean_forecasts may have been generated with different settings).
+        if self.mean_forecasts.shape[1] != fhor or future_exog is not None:
+            self.forecast(fhor=fhor, plot_forecast=False, future_exog=future_exog)
 
         # Compute IRFs if not yet available
         if not hasattr(self, 'ir_draws') or len(self.ir_draws) == 0:
