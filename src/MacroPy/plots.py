@@ -200,6 +200,178 @@ def generate_coeff_plot(self):
     return const_plot, var_plots
 
 
+_EXOG_PASTEL_PALETTE = [
+    "#a6cee3",  # light blue
+    "#cab2d6",  # light purple
+    "#b2df8a",  # pale green
+    "#fdbf6f",  # peach
+    "#fb9a99",  # pink
+    "#ccebc5",  # pale mint
+    "#fde0a3",  # pale yellow
+    "#e0c3a3",  # tan
+    "#c0c0e8",  # lavender
+    "#a8d8e0",  # cyan
+    "#f0b0a8",  # salmon
+    "#bcbddc",  # mauve
+]
+
+
+def _facet_grid_shape(n: int, ncol: int = None) -> tuple:
+    """
+    Pick a balanced ``(nrow, ncol)`` layout for ``n`` panels.
+
+    Defaults:  1→1×1, 2→1×2, 3→1×3, 4→2×2, 5–6→2×3, 7–9→3×3, then ceil(sqrt(n)).
+    If ``ncol`` is supplied, ``nrow`` is computed to fit.
+    """
+    if ncol is not None:
+        ncol = max(1, int(ncol))
+        return (int(math.ceil(n / ncol)), ncol)
+    if n <= 1:
+        return (1, 1)
+    if n == 2:
+        return (1, 2)
+    if n == 3:
+        return (1, 3)
+    if n == 4:
+        return (2, 2)
+    if n <= 6:
+        return (2, 3)
+    if n <= 9:
+        return (3, 3)
+    ncol = int(math.ceil(math.sqrt(n)))
+    return (int(math.ceil(n / ncol)), ncol)
+
+
+def generate_exog_coeff_plot(
+    self,
+    bins: int = 30,
+    ncol: int = None,
+    series_titles: list = None,
+    palette: list = None,
+):
+    """
+    Posterior histograms of user-supplied exogenous coefficients in a Bayesian VAR.
+
+    Layout: one panel per equation (auto-arranged into a balanced grid). Within
+    each panel, the marginal posteriors of every exogenous regressor are
+    overlaid as semi-transparent histograms with a shared color legend
+    (e.g. one color per pandemic dummy).
+
+    Parameters
+    ----------
+    self : BayesianVAR
+        Fitted model whose ``sample_posterior`` has been called and that was
+        constructed with a non-empty ``exog`` argument.
+    bins : int, default=30
+        Number of histogram bins per panel.
+    ncol : int, optional
+        Number of columns in the facet grid. If omitted, picked from
+        ``n_endo`` (e.g. 2→1×2, 4→2×2, 6→2×3, 9→3×3).
+    series_titles : list of str, optional
+        Equation titles to display instead of ``self.names``. Must have the
+        same length as ``self.names``.
+    palette : list of str, optional
+        Hex colors for the exogenous regressors. Defaults to a 12-color
+        pastel palette (cycled if more than 12 dummies are supplied).
+
+    Returns
+    -------
+    plotnine.ggplot
+        Faceted histogram plot ready to display.
+    """
+    if not hasattr(self, "beta_draws") or len(self.beta_draws) == 0:
+        raise ValueError("No posterior draws available. Run sample_posterior() first.")
+    if getattr(self, "n_exog_user", 0) == 0:
+        raise ValueError("This model was estimated without user-supplied exogenous variables.")
+
+    beta_array = np.asarray(self.beta_draws)               # (n_draws, n_endo * ncoeff_eq)
+    ncoeff_eq = self.ncoeff_eq
+    n_endo = self.n_endo
+    n_exog_user = self.n_exog_user
+    exog_names = list(self.exog_names)
+
+    if series_titles is not None:
+        if len(series_titles) != n_endo:
+            raise ValueError(
+                f"`series_titles` must have length {n_endo}; got {len(series_titles)}."
+            )
+        eq_labels = [str(t) for t in series_titles]
+    else:
+        eq_labels = [str(n) for n in self.names]
+
+    # Position of the user-exog block within each equation: after lag block,
+    # constant, and trend.
+    det_offset = int(self.constant) + int(self.timetrend)
+    exo_start = n_endo * self.lags + det_offset
+
+    # Build long-format frame: one row per (equation, exogenous, draw).
+    n_draws = beta_array.shape[0]
+    cols_per_eq = [
+        [eq_idx * ncoeff_eq + exo_start + e for e in range(n_exog_user)]
+        for eq_idx in range(n_endo)
+    ]
+    pieces = []
+    for eq_idx, eq_label in enumerate(eq_labels):
+        block = beta_array[:, cols_per_eq[eq_idx]]               # (n_draws, n_exog_user)
+        sub = pd.DataFrame(block, columns=exog_names).melt(
+            var_name="Exogenous", value_name="Value"
+        )
+        sub["Equation"] = eq_label
+        pieces.append(sub)
+    df = pd.concat(pieces, ignore_index=True)
+    df["Equation"] = pd.Categorical(df["Equation"], categories=eq_labels, ordered=True)
+    df["Exogenous"] = pd.Categorical(df["Exogenous"], categories=exog_names, ordered=True)
+
+    # Layout and figure sizing
+    nrow, ncol_eff = _facet_grid_shape(n_endo, ncol)
+    width = ncol_eff * 4.5
+    height = nrow * 2.8 + 0.6   # extra room for bottom legend
+
+    # Color palette — cycle if more dummies than colors
+    pal = palette if palette is not None else _EXOG_PASTEL_PALETTE
+    colors = [pal[i % len(pal)] for i in range(n_exog_user)]
+
+    plot = (
+        ggplot(df, aes(x="Value", fill="Exogenous"))
+        + geom_histogram(
+            bins=bins,
+            color="black",
+            size=0.2,
+            alpha=0.55,
+            position="identity",
+        )
+        + facet_wrap("~Equation", ncol=ncol_eff, scales="free")
+        + scale_fill_manual(values=colors)
+        + guides(fill=guide_legend(title="", nrow=1, byrow=True))
+        + labs(
+            title="Posterior Distributions of Exogenous Coefficients",
+            x="",
+            y="",
+        )
+        + theme(
+            figure_size=(width, height),
+            panel_background=element_rect(fill="white", color="white"),
+            plot_background=element_rect(fill="white", color="white"),
+            strip_background=element_rect(fill="white", color="white"),
+            panel_grid_major=element_line(color="grey", linetype="dashed", size=0.5, alpha=0.3),
+            panel_grid_minor=element_blank(),
+            strip_text=element_text(size=10, weight="bold"),
+            plot_title=element_text(size=12, face="bold"),
+            axis_text_x=element_text(size=8),
+            axis_text_y=element_text(size=8),
+            axis_line_x=element_line(color="black", size=1),
+            axis_line_y=element_line(color="black", size=1),
+            legend_position="bottom",
+            legend_direction="horizontal",
+            legend_title=element_blank(),
+            legend_key=element_rect(fill="white", color="white"),
+            legend_background=element_rect(fill="white", color="white"),
+        )
+    )
+
+    return plot
+
+
 def generate_panel_coeff_plots(self):
     """
     Plot posterior distributions for pooled mean lag coefficients and the pooling parameter.

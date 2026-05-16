@@ -14,7 +14,8 @@ def _format_exogenous(settings):
         pieces.append("Constant")
     if getattr(settings, "timetrend", False):
         pieces.append("Trend")
-    pieces.extend(getattr(settings, "exo_names", []))
+    # BayesianVAR uses `exog_names`; BayesianPanelVAR uses `exo_names`. Cover both.
+    pieces.extend(getattr(settings, "exo_names", []) or getattr(settings, "exog_names", []))
     return ", ".join(pieces) if pieces else "None"
 
 
