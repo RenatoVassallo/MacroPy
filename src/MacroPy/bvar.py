@@ -291,6 +291,7 @@ class BayesianVAR:
 
         self.beta_draws = []
         self.Sigma_draws = []
+        self.resid_draws = []   
 
         for _ in tqdm(range(self.post_draws), desc="Sampling Posterior"):
             Sigma_inv = inv(Sigma) if self.prior_type in [2, 3] else inv(Sigma_ols)
@@ -308,9 +309,11 @@ class BayesianVAR:
                 if self.is_stable(Bcomp):
                     break
 
+            # Reduced-form residuals
+            resid = self.yy - self.XX @ B     
+
             # Draw Sigma if applicable
             if self.prior_type in [2, 3]:
-                resid = self.yy - self.XX @ B
                 scale_term = resid.T @ resid
                 if self.prior_type == 2:
                     scale_term += Scale0
@@ -322,10 +325,12 @@ class BayesianVAR:
             # Store draws
             self.beta_draws.append(beta_vec)
             self.Sigma_draws.append(Sigma if self.prior_type in [2, 3] else Sigma_ols)
+            self.resid_draws.append(resid)
 
         # Apply burn-in
         self.beta_draws = np.array(self.beta_draws[self.burnin:])
         self.Sigma_draws = np.array(self.Sigma_draws[self.burnin:])
+        self.resid_draws = np.array(self.resid_draws[self.burnin:])
 
         # Optional: plot coefficient draws
         if plot_coefficients:
@@ -338,7 +343,8 @@ class BayesianVAR:
 
         return {
             "beta_draws": self.beta_draws,
-            "Sigma_draws": self.Sigma_draws
+            "Sigma_draws": self.Sigma_draws,
+            "resid_draws": self.resid_draws
         }
 
 

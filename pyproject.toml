@@ -45,14 +45,25 @@ Issues = "https://github.com/RenatoVassallo/MacroPy/issues"
 
 [dependency-groups]
 dev = [
+    # Jupyter / notebook execution
     "pyarrow>=20.0.0",
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.6",
+    "nbconvert>=7.16",
+    "nbformat>=5.10",
+    # Plotting + tabular IO
     "matplotlib>=3.10.1",
-    "python-dotenv>=1.1.0",
     "seaborn>=0.13.2",
     "xlsxwriter>=3.2,<4",
     "openpyxl>=3.1,<4",
+    # Environment management
+    "python-dotenv>=1.1.0",
+    # Classes / applied teaching notebooks (econometrics + ML stack)
+    "scikit-learn>=1.4",
+    "scikit-optimize>=0.10",   # BayesSearchCV
+    "pmdarima>=2.0",           # auto_arima
+    "xgboost>=2.0",            # requires libomp on macOS: brew install libomp
+    "statsmodels>=0.14",       # SARIMAX backend for ARMA
 ]
 
 [build-system]

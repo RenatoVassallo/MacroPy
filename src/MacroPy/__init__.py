@@ -13,6 +13,8 @@ from .data_handling import *
 from .plots import *
 from .priors import *
 from .summary import *
+from .state_space import *
+from .plots_kalman import *
 
 try:
     from .get_macrodata import *
