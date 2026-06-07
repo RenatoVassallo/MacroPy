@@ -22,6 +22,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 ✅ Structural impulse response functions and Forecast Error Variance Decomposition  
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
+✅ Threshold VAR with stochastic volatility and uncertainty shocks (Alessandri & Mumtaz, 2019)  
 ✅ High-quality plots using `ggplot2`-style, ready for LaTeX or reports  
 
 **Specifically for the `BayesianVAR` class:**
@@ -70,7 +71,8 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - 📡 [`tutorial_api.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_api.ipynb): Accessing macroeconomic data via APIs  
 - 🧮 [`tutorial_cvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_cvar.ipynb): Classic VAR estimation  
 - 🧠 [`tutorial_bvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar.ipynb): Bayesian VAR estimation and forecasting  
-- 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)
+- 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
+- ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
 
 ---
 
@@ -79,7 +81,6 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 The roadmap for future versions includes:
 
 - 🦠 Pandemic-specific priors for crisis episodes  
-- ⛓️ Threshold and regime-switching BVARs  
 - 🔍 Unobserved components models  
 - 🖼️ Enhanced plotting themes and publication export options  
 - 🧭 DSGE-style simulation support  

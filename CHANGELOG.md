@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`ThresholdVARSV`** — Threshold VAR with stochastic volatility, replicating
+  Alessandri & Mumtaz (2019), *"Financial regimes and uncertainty shocks"*
+  (Journal of Monetary Economics). Two endogenously-dated regimes (calm/crisis)
+  selected by a threshold on a financial-distress indicator with an estimated
+  delay, a common scalar stochastic-volatility factor that scales the whole
+  covariance matrix, and volatility-in-mean effects. Implemented in `tvarsv.py`.
+- **Gibbs sampler** with optional **multi-chain parallelism** (`joblib`) and a
+  vectorized single-move volatility step (Jacquier-Polson-Rossi), random-walk
+  Metropolis threshold and multinomial delay (Chen-Lee).
+- **Generalized impulse responses** (Koop-Pesaran-Potter) reported by regime,
+  vectorized over histories x Monte-Carlo paths with common random numbers and
+  parallelized over posterior draws (`ThresholdVARSV.compute_irfs`).
+- **Plotting helpers** in `plots_tvarsv.py`: `plot_regimes`, `plot_volatility`,
+  `plot_irfs` (reproducing the paper's Figs. 1-3).
+- New tutorial: `tutorials/tutorial_tvarsv.ipynb`.
+- New dataset: `datasets/AlessandriMumtaz_Data.csv` (monthly US data, 1973-2014).
+- `joblib` and `matplotlib` added as explicit dependencies.
+
 ## [0.1.6] - 2026-05-15
 
 ### Added

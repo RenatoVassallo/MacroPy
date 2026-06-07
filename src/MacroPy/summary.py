@@ -129,3 +129,72 @@ $$
 """
 
     return Markdown(summary)
+
+
+def _tvarsv_equations():
+    return r"""
+\begin{align*}
+Z_t &= \Big(c_1 + \sum_{j=1}^{P} B_{1,j} Z_{t-j} + \sum_{j=0}^{J}\gamma_{1,j}\ln\lambda_{t-j} + \Omega_{1,t}^{1/2} e_t\Big)\,\tilde S_t \\
+&\;+ \Big(c_2 + \sum_{j=1}^{P} B_{2,j} Z_{t-j} + \sum_{j=0}^{J}\gamma_{2,j}\ln\lambda_{t-j} + \Omega_{2,t}^{1/2} e_t\Big)(1-\tilde S_t) \\
+\tilde S_t &= 1 \iff F_{t-d} \le Z^{*} \\
+\Omega_{i,t} &= A_i^{-1} H_t A_i^{-1\prime}, \qquad H_t = \lambda_t \, \mathrm{diag}(s_1,\dots,s_N) \\
+\ln \lambda_t &= \alpha + F \ln \lambda_{t-1} + \eta_t, \qquad \eta_t \sim \mathcal{N}(0, Q)
+\end{align*}
+"""
+
+
+def generate_tvarsv_summary(settings):
+    """
+    Generate a structured Markdown summary for the Threshold VAR-SV model,
+    matching the layout of :func:`generate_summary`.
+    """
+    linkedin_text = "Renato Vassallo"
+    linkedin_url = "https://www.linkedin.com/in/renatovassallo"
+
+    sample_start = settings.dates[settings.lags + settings.training].date()
+    sample_end = settings.dates[-1].date()
+    var_params = 2 * settings.k * settings.N
+    total_draws = settings.post_draws  # post_draws is the total (incl. burn-in)
+
+    summary = f"""
+**MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**
+Developed by [{linkedin_text}]({linkedin_url}) - Institute for Economic Analysis (IAE-CSIC)
+Version {__version__}
+
+---
+
+**Model Specifications**
+- **Model Type**: Threshold VAR with Stochastic Volatility (Alessandri & Mumtaz, 2019)
+- **Endogenous Variables**: {', '.join(map(str, settings.names))}
+- **Threshold Variable**: {settings.threshold_name}
+- **Number of Lags (P)**: {settings.lags}
+- **Volatility-in-Mean Lags (J)**: {settings.vol_lags}
+- **Maximum Threshold Delay**: {settings.max_delay}
+- **Sample Period**: {sample_start} to {sample_end} ({settings.T} observations)
+- **VAR Parameters (both regimes)**: {var_params}
+
+---
+
+**Bayesian Estimation Settings**
+- **Posterior Simulation**: Gibbs Sampling
+- **Regimes**: 2 (calm / crisis), endogenous threshold and delay
+- **Stochastic Volatility**: single common factor, AR(1) in logs
+- **Total Draws**: {total_draws}
+- **Burn-in**: {settings.burnin} ({settings.burnin / total_draws:.0%})
+
+---
+
+**Impulse Response Details**
+- **GIRF Horizon**: {settings.hor}
+- **Identification**: Generalized IRF (Koop, Pesaran & Potter, 1996)
+
+---
+
+**Model Equations**
+
+$$
+{_tvarsv_equations()}
+$$
+"""
+
+    return Markdown(summary)
