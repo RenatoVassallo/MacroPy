@@ -40,8 +40,11 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.5/macropy-0.1.5-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.7/macropy-0.1.7-py3-none-any.whl
 ```
+
+> 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
+> [Python + VS Code: a practical setup](https://renatovassallo.github.io/posts/python-vscode-practical-setup/)
 
 ---
 
@@ -71,19 +74,10 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - 📡 [`tutorial_api.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_api.ipynb): Accessing macroeconomic data via APIs  
 - 🧮 [`tutorial_cvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_cvar.ipynb): Classic VAR estimation  
 - 🧠 [`tutorial_bvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar.ipynb): Bayesian VAR estimation and forecasting  
+- 🦠 [`tutorial_bvar_pandemic.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar_pandemic.ipynb): Bayesian VAR with pandemic / COVID time dummies  
+- 🏗️ [`tutorial_bpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bpvar.ipynb): Hierarchical Bayesian Panel VAR  
 - 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
 - ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
-
----
-
-## 🔮 Coming Soon
-
-The roadmap for future versions includes:
-
-- 🦠 Pandemic-specific priors for crisis episodes  
-- 🔍 Unobserved components models  
-- 🖼️ Enhanced plotting themes and publication export options  
-- 🧭 DSGE-style simulation support  
 
 ---
 
@@ -91,5 +85,5 @@ The roadmap for future versions includes:
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2025). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.6.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.7.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

@@ -1,6 +1,6 @@
 [project]
 name = "MacroPy"
-version = "0.1.6"
+version = "0.1.7"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
