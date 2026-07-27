@@ -1,6 +1,6 @@
 [project]
 name = "MacroPy"
-version = "0.1.7"
+version = "0.1.8"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -60,6 +60,8 @@ dev = [
     "openpyxl>=3.1,<4",
     # Environment management
     "python-dotenv>=1.1.0",
+    # Testing
+    "pytest>=8.0",
     # Classes / applied teaching notebooks (econometrics + ML stack)
     "scikit-learn>=1.4",
     "scikit-optimize>=0.10",   # BayesSearchCV

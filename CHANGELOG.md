@@ -4,6 +4,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **COVID treatment in `BayesianVAR`**: `covid_window` + `covid_mode`.
+  `"lenza-primiceri"` implements Lenza & Primiceri (2022) volatility scaling —
+  residuals in the window have variance `s_t^2 * Sigma`, estimation applies the
+  exact GLS reweighting to the OLS moments and all three priors, and the scales
+  are either user-fixed (`covid_scales`) or estimated by maximizing the analytic
+  conjugate Normal-Wishart marginal likelihood (`covid_n_free` free scales plus
+  geometric decay). `"dummies"` auto-builds one time dummy per window
+  observation through the existing exogenous block.
+- **Reproducibility**: `seed` argument in `BayesianVAR`. Each stochastic method
+  draws from a deterministic per-stage generator, so `sample_posterior` and
+  `forecast` are idempotent and runs with the same data and seed produce
+  identical draws.
+- **Headless tidy outputs**: `forecast_frame()` and
+  `conditional_forecast_frame()` return DataFrames indexed by
+  `(variable, horizon)` with `[date, mean, median, qXX...]` columns, without
+  plotting. `conditional_forecast` now also accepts friendly
+  `{variable_name: path}` condition dicts (partial horizons, `{horizon: value}`
+  form, scalars), converted internally to the NaN matrix.
+- **Hyperparameter selection**: `select_hyperparameters()` maximizes the
+  Giannone-Lenza-Primiceri (2015) analytic marginal likelihood over
+  `lamda1`/`lamda3`/`lamda4` (empirical Bayes) and rebuilds the prior;
+  `log_marginal_likelihood()` exposes the objective. `lamda2` is excluded by
+  construction (own/cross asymmetry breaks the Kronecker structure).
+- New conjugate-NW machinery in `priors.py`: `nw_conjugate_moments`,
+  `nw_log_marginal_likelihood` (validated against Monte Carlo integration),
+  `ar1_residual_std`.
+- **Unit tests** (`tests/test_bvar_production.py`): posterior recovery on a
+  synthetic VAR, identical draws under a fixed seed, dict conditions honored
+  exactly, the COVID scale factor absorbing injected 2020 outliers without
+  moving pre-2020 coefficients, tidy-frame layout, and a Monte-Carlo check of
+  the marginal-likelihood formula. `pytest` added to the dev group.
+
+### Changed
+- Tutorials refreshed for the new API: `tutorial_bvar.ipynb` now uses `seed`,
+  the `{variable: path}` conditional-forecast dict, and adds sections on tidy
+  forecast frames and GLP hyperparameter selection; `tutorial_bvar_pandemic.ipynb`
+  now uses the built-in `covid_mode="dummies"` and adds a section on the
+  recommended Lenza-Primiceri volatility scaling, comparing all three
+  treatments (estimated scales on the Peru data: about 5-8x ordinary volatility
+  in 2020Q2-2021Q2).
+
+### Fixed
+- **Forecast routines verified against the Canova-Ferroni `BVAR_` toolbox**
+  (github.com/naffe15/BVAR_), draw by draw, via a line-by-line port of
+  `forecasts.m` / `cforecasts.m`. Three deviations found and corrected:
+  - `forecast()` appended the *shocked* values into the lag history used for
+    the "no-shock" path, so `mean_forecasts` was not the deterministic
+    forecast from horizon 2 onward (and contaminated the conditional-forecast
+    baseline). The two paths now iterate on separate lag histories and match
+    the reference exactly (0 gap over all posterior draws).
+  - `conditional_forecast` used only the minimum-norm Waggoner-Zha shocks, so
+    conditional bands reflected parameter uncertainty alone and were roughly
+    2.5-3x too narrow for unconstrained variables. The full Waggoner-Zha
+    distribution (null-space shock draws, seeded) is now the default; pass
+    `shock_uncertainty=False` for the previous mean-only behavior. Imposed
+    conditions still hold exactly in every draw.
+  - With `irf_1std=0` the conditioning solved the minimum-norm problem in
+    unit-shock units, which is not the Gaussian conditional expectation.
+    Conditioning now always operates in 1-s.d. structural units internally,
+    independent of the IRF display setting.
+- **`MinnesotaPrior` residual-scale calibration**: the per-series regression
+  used columns `[0, i+1]` of the regressor matrix (lag-1 of the *first* and the
+  *(i+1)-th* variable) instead of the intended own first lag plus intercept —
+  the constant sits at the end of the `prepare_data` layout, not at column 0.
+  Prior scales `std_ar` were substantially overstated for persistent series
+  (interest rates, expectations), loosening cross-lag shrinkage and the
+  Normal-Wishart `Scale0`. Now computed by `ar1_residual_std` (own lag +
+  intercept). Posterior results change slightly; the correction matters most
+  for systems mixing persistent and volatile variables.
+- `conditional_forecast` no longer fails (or silently truncates) when the
+  requested `fhor` exceeds the IRF horizon `hor`; IRFs are recomputed with a
+  sufficient horizon on the fly.
+- `BayesianVAR` no longer mutates the shared default `prior_params` dict, which
+  could leak hyperparameters across instances in the same session.
+
 ## [0.1.7] - 2026-06-08
 
 ### Added

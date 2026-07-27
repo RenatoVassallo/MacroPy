@@ -110,6 +110,19 @@ Version {__version__}
 """
         if hasattr(settings, "n_units"):
             summary += f"- **Hierarchical Pooling Parameter**: lambda\n"
+        covid_mode = getattr(settings, "covid_mode", None)
+        if covid_mode is not None:
+            start, end = settings.covid_window
+            label = ("Lenza-Primiceri volatility scaling"
+                     if covid_mode == "lenza-primiceri" else "Time dummies")
+            summary += f"- **COVID Treatment**: {label} ({start} to {end})\n"
+            scales = getattr(settings, "covid_scales", None)
+            if scales is not None:
+                shown = ", ".join(f"{s:.1f}" for s in scales[:6])
+                more = ", ..." if len(scales) > 6 else ""
+                summary += f"- **COVID Volatility Scales**: [{shown}{more}]\n"
+        if getattr(settings, "seed", None) is not None:
+            summary += f"- **Random Seed**: {settings.seed}\n"
 
     summary += f"""
 ---
