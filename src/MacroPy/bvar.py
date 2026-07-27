@@ -799,6 +799,8 @@ class BayesianVAR:
               no-shock paths (each iterated on its own deterministic lags, as in
               the Canova-Ferroni BVAR_ toolbox).
         """
+        if len(self.beta_draws) == 0:
+            raise RuntimeError("Call sample_posterior() before forecast().")
         rng = self._rng("forecast")
         n_draws = len(self.beta_draws)
         n_endo = self.n_endo
@@ -988,6 +990,8 @@ class BayesianVAR:
             cond_forecasts (np.ndarray): Shape (n_draws, fhor, n_endo), conditional forecasts.
             shock_record (np.ndarray): Shape (n_draws, fhor, n_endo), identified shocks to meet conditions.
         """
+        if len(self.beta_draws) == 0:
+            raise RuntimeError("Call sample_posterior() before conditional_forecast().")
         conditions = self._conditions_to_matrix(conditions, fhor)
         rng = self._rng("conditional")
         n_draws = self.n_draws
@@ -995,10 +999,15 @@ class BayesianVAR:
         self.cond_forecasts = np.zeros((n_draws, fhor, n_endo))
         shock_record = np.zeros((n_draws, fhor, n_endo))
 
-        # Recompute mean_forecasts so they reflect the requested fhor + future_exog
-        # (the base mean_forecasts may have been generated with different settings).
-        if self.mean_forecasts.shape[1] != fhor or future_exog is not None:
-            self.forecast(fhor=fhor, plot_forecast=False, future_exog=future_exog)
+        # Always rebuild the no-shock baseline for the requested fhor and
+        # future_exog. Reusing a cached `mean_forecasts` is unsafe: at
+        # construction it is a zeros array of exactly this shape, so a
+        # shape-based staleness check cannot distinguish "never forecasted"
+        # (or "re-sampled since") from "up to date" — and a zero baseline makes
+        # the solver read the whole conditioning path as a deviation, firing
+        # enormous shocks. The recomputation is cheap and, with a seed, fully
+        # reproducible.
+        self.forecast(fhor=fhor, plot_forecast=False, future_exog=future_exog)
 
         # Conditioning operates in 1-s.d. structural units. When the display
         # setting is irf_1std=1 the cached ir_draws are exactly that and are

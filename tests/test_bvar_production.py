@@ -197,6 +197,56 @@ def test_forecasts_match_canova_reference():
     assert np.allclose(m0.cond_forecasts, mean_paths, atol=1e-8)
 
 
+def test_conditional_forecast_call_order_independent():
+    """
+    Regression: conditional_forecast must not depend on whether forecast() ran
+    first. The constructor pre-allocates `mean_forecasts` as zeros with shape
+    (n_draws, fhor, n_endo); the old shape-based staleness check mistook that
+    for a valid baseline whenever the requested fhor equaled the constructor's,
+    so the solver conditioned against zeros and produced explosive paths.
+    """
+    df, *_ = simulate_var(T=250, seed=3)
+    fhor = 6
+    kw = dict(lags=2, prior_type=2, prior_params=LOOSE_PRIOR, post_draws=200,
+              burnin=0.5, fhor=fhor, hor=fhor, seed=13)
+    cond = {"y3": [1.0] * 4}
+
+    # Path A: conditional_forecast directly after sampling (fhor == self.fhor).
+    m_a = BayesianVAR(df, **kw)
+    m_a.sample_posterior()
+    cf_a, _ = m_a.conditional_forecast(cond, fhor=fhor, plot_forecast=False)
+
+    # Path B: identical model, but an unconditional forecast runs in between.
+    m_b = BayesianVAR(df, **kw)
+    m_b.sample_posterior()
+    m_b.forecast(fhor=fhor, plot_forecast=False)
+    cf_b, _ = m_b.conditional_forecast(cond, fhor=fhor, plot_forecast=False)
+
+    assert np.allclose(cf_a, cf_b, atol=1e-10)
+
+    # Falsification of the baseline: conditioning a variable on its own
+    # unconditional mean (no-shock) path must leave the others nearly
+    # unchanged. Null-space draws are off to isolate the systematic effect
+    # from Monte-Carlo noise; what remains is the small Jensen-type term from
+    # imposing a common path draw by draw.
+    m_b.forecast(fhor=fhor, plot_forecast=False)
+    unc_det = m_b.mean_forecasts.mean(axis=0)         # (fhor, n)
+    own_path = list(unc_det[:4, 2])
+    cf_own, _ = m_b.conditional_forecast({"y3": own_path}, fhor=fhor,
+                                         plot_forecast=False,
+                                         shock_uncertainty=False)
+    gap = np.abs(cf_own.mean(axis=0)[:, :2] - unc_det[:, :2]).max()
+    disp = m_b.forecasts.std(axis=0)[:, :2].max()
+    assert gap < 0.25 * disp
+
+    # Calling before sample_posterior must fail loudly, not condition on zeros.
+    m_c = BayesianVAR(df, **kw)
+    with pytest.raises(RuntimeError, match="sample_posterior"):
+        m_c.conditional_forecast(cond, fhor=fhor, plot_forecast=False)
+    with pytest.raises(RuntimeError, match="sample_posterior"):
+        m_c.forecast(fhor=fhor, plot_forecast=False)
+
+
 def test_conditional_forecast_dict_conditions():
     df, *_ = simulate_var(T=250, seed=3)
     m = BayesianVAR(df, lags=1, prior_type=1, prior_params=LOOSE_PRIOR,

@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in 2020Q2-2021Q2).
 
 ### Fixed
+- **`conditional_forecast` no longer depends on call order**: the no-shock
+  baseline is now always rebuilt for the requested horizon. Previously a
+  shape-based staleness check mistook the zero-initialized `mean_forecasts`
+  array for a valid baseline whenever the requested `fhor` equaled the
+  constructor's, so calling `conditional_forecast` without a prior
+  `forecast()` conditioned against a *zero* baseline — the solver read the
+  entire imposed path as a deviation and fired enormous shocks (explosive
+  spillovers to unconstrained variables). Both `forecast()` and
+  `conditional_forecast()` now also raise a clear error when called before
+  `sample_posterior()`.
 - **Forecast routines verified against the Canova-Ferroni `BVAR_` toolbox**
   (github.com/naffe15/BVAR_), draw by draw, via a line-by-line port of
   `forecasts.m` / `cforecasts.m`. Three deviations found and corrected:
