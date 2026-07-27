@@ -30,7 +30,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 - Minnesota, Normal-Wishart, and Normal-Diffuse priors  
 - Structural IRFs using Cholesky decomposition  
 - Support for block exogeneity (zero restrictions on lag structures)
-- Conditional forecasting à la Waggoner & Zha (1999) with the full conditional shock distribution, verified draw-by-draw against the Canova-Ferroni [`BVAR_`](https://github.com/naffe15/BVAR_) toolbox, and friendly `{variable: path}` scenario dicts  
+- Conditional forecasting à la Waggoner & Zha (1999) with the full conditional shock distribution, and friendly `{variable: path}` scenario dicts  
 - Fan chart-style forecast plots with flexible credibility intervals  
 - COVID-window treatment: Lenza & Primiceri (2022) volatility scaling or automatic time dummies  
 - Full reproducibility via a `seed` argument, and tidy `forecast_frame()` / `conditional_forecast_frame()` outputs for production pipelines  
@@ -43,7 +43,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.7/macropy-0.1.7-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.8/macropy-0.1.8-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -88,5 +88,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.7.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.8.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)
