@@ -522,3 +522,144 @@ def test_soc_dio_combinations():
                       post_draws=150, burnin=0.5, seed=9)
     m_b.sample_posterior()
     assert np.isfinite(m_b.beta_draws).all()
+
+
+# ---------------------------------------------------------------------------
+# Steady-state (mean-adjusted) prior (Villani, 2009)
+# ---------------------------------------------------------------------------
+
+def _late_decline_df(T=200, n_fall=30, hi=8.0, lo=4.0, seed=13):
+    """Mean at `hi` for most of the sample, declining to `lo` at the end, so
+    the sample mean (~8) overstates the terminal level (the China-GDP case)."""
+    rng = np.random.default_rng(seed)
+    mpath = np.concatenate([np.full(T - n_fall, hi), np.linspace(hi, lo, n_fall)])
+    u = np.zeros((T, 2))
+    for t in range(1, T):
+        u[t] = 0.5 * u[t - 1] + rng.standard_normal(2) * 0.7
+    y = mpath[:, None] + u + np.array([0.0, 1.0])
+    return pd.DataFrame(y, index=pd.date_range("2004-01-01", periods=T, freq="MS"),
+                        columns=["y1", "y2"])
+
+
+SS_BASE = {"mn_mean": 0.0, "lamda1": 0.5, "lamda2": 1.0, "lamda3": 1.0,
+           "lamda4": 1e5}
+
+
+def test_ss_prior_anchors_to_judgment():
+    """A. Tight ss anchors h=40 forecasts at m0; loose reverts to sample mean."""
+    df = _late_decline_df()
+    target = np.array([4.0, 5.0])
+
+    def run(ss_sd):
+        pp = dict(SS_BASE, ss_mean={"y1": 4.0, "y2": 5.0}, ss_sd=ss_sd)
+        m = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp,
+                        post_draws=400, burnin=0.5, seed=5)
+        m.sample_posterior()
+        m.forecast(fhor=40, plot_forecast=False)
+        return m
+
+    m_tight = run(0.1)
+    assert np.abs(m_tight.mu_draws.mean(axis=0) - target).max() < 0.15
+    fc40 = m_tight.mean_forecasts.mean(axis=0)[-1]
+    assert np.abs(fc40 - target).max() < 0.6
+    # Forecasts converge to the draw's own mu by construction.
+    drawwise = np.abs(m_tight.mean_forecasts[:, -1, :] - m_tight.mu_draws)
+    assert np.median(drawwise) < 0.5
+
+    m_loose = run(1e3)
+    sample_mean = df.mean().to_numpy()
+    assert np.abs(m_loose.mu_draws.mean(axis=0) - sample_mean).max() < 0.5
+    fc40_loose = m_loose.mean_forecasts.mean(axis=0)[-1]
+    assert np.abs(fc40_loose - target).max() > 1.5
+
+
+def test_ss_backward_compatibility():
+    """B. Without ss keys nothing changes: absent and ss_mean=None give
+    bit-identical draws through untouched code paths (verified against a
+    pre-change 0.1.9 snapshot during development)."""
+    df, *_ = simulate_var(T=250, seed=3)
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=LOOSE_PRIOR,
+                    post_draws=300, burnin=0.5, seed=42)
+    assert not m.ss_active
+    m.sample_posterior()
+
+    # ss_mean=None behaves exactly like absent.
+    m2 = BayesianVAR(df, lags=2, prior_type=2,
+                     prior_params=dict(LOOSE_PRIOR, ss_mean=None),
+                     post_draws=300, burnin=0.5, seed=42)
+    assert not m2.ss_active
+    m2.sample_posterior()
+    assert np.array_equal(m.beta_draws, m2.beta_draws)
+
+    # When available (development machine), also pin against the frozen
+    # 0.1.9 reference draws.
+    import pathlib
+    ref = pathlib.Path("/private/tmp/claude-501/-Users-rvs-GitRepos-MacroPy/"
+                       "fb3d4244-d0db-4ef8-a29c-92c9979bcfe6/scratchpad/ref019_beta.npy")
+    if ref.exists():
+        assert np.array_equal(np.load(ref), m.beta_draws)
+
+
+def test_ss_conditional_forecast():
+    """C. Conditions hold exactly under ss; paths converge toward mu beyond."""
+    df = _late_decline_df()
+    pp = dict(SS_BASE, ss_mean={"y1": 4.0, "y2": 5.0}, ss_sd=0.1)
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp,
+                    post_draws=400, burnin=0.5, seed=5)
+    m.sample_posterior()
+    cf, _ = m.conditional_forecast({"y1": [4.5, 4.8]}, fhor=40,
+                                   plot_forecast=False)
+    assert np.allclose(cf[:, 0, 0], 4.5, atol=1e-6)
+    assert np.allclose(cf[:, 1, 0], 4.8, atol=1e-6)
+    mu_post = m.mu_draws.mean(axis=0)
+    assert np.abs(cf.mean(axis=0)[-1] - mu_post).max() < 0.6
+
+    frame = m.conditional_forecast_frame({"y1": [4.5]}, fhor=8)
+    assert frame.loc[("y1", 1), "median"] == pytest.approx(4.5, abs=1e-6)
+
+
+def test_ss_combinations():
+    """D. ss + Lenza-Primiceri COVID and ss + soc/dio run clean."""
+    common = dict(T=252, seed=4, start="2002-01-01")
+    df, *_ = simulate_var(covid_scale=15.0, covid_start="2020-03-01",
+                          covid_len=16, **common)
+    df = df + 6.0
+    pp = dict(SS_BASE, ss_mean=6.0, ss_sd=0.5)
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp,
+                    covid_window=("2020-03", "2021-06"),
+                    covid_mode="lenza-primiceri",
+                    post_draws=200, burnin=0.5, seed=9)
+    m.sample_posterior()
+    assert np.isfinite(m.mu_draws).all() and np.isfinite(m.beta_draws).all()
+    assert np.isfinite(m.forecast_frame(fhor=6)[["mean", "median"]].to_numpy()).all()
+
+    # Deliberate combination: soc/dio (unit roots) vs ss (reversion to mu).
+    m2 = BayesianVAR(df, lags=2, prior_type=1,
+                     prior_params=dict(pp, soc=1.0, dio=1.0),
+                     post_draws=150, burnin=0.5, seed=9)
+    m2.sample_posterior()
+    assert np.isfinite(m2.mu_draws).all()
+
+
+def test_ss_guards():
+    """E. Unsupported combinations fail loudly."""
+    df = _late_decline_df(T=120)
+    pp = dict(SS_BASE, ss_mean=4.0, ss_sd=0.5)
+
+    with pytest.raises(ValueError, match="timetrend"):
+        BayesianVAR(df, lags=2, prior_params=pp, timetrend=True)
+    with pytest.raises(ValueError, match="exogenous"):
+        exog = pd.DataFrame({"d": np.zeros(len(df))}, index=df.index)
+        BayesianVAR(df, lags=2, prior_params=pp, exog=exog)
+    with pytest.raises(ValueError, match="dummies"):
+        BayesianVAR(df, lags=2, prior_params=pp,
+                    covid_window=("2010Q1", "2010Q4"), covid_mode="dummies")
+    with pytest.raises(ValueError, match="Unknown variable"):
+        BayesianVAR(df, lags=2, prior_params=dict(SS_BASE, ss_mean={"nope": 1.0}))
+
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp,
+                    post_draws=50, seed=1)
+    with pytest.raises(NotImplementedError, match="steady-state"):
+        m.select_hyperparameters()
+    with pytest.raises(NotImplementedError, match="steady-state"):
+        m.log_marginal_likelihood()

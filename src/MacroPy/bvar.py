@@ -101,6 +101,26 @@ class BayesianVAR:
                 Both work with every prior_type (they are data augmentation)
                 and with the COVID modes; the pseudo-observations are built
                 from the pre-sample means and enter estimation unweighted.
+                Optional steady-state (mean-adjusted) prior, Villani (2009,
+                Journal of Applied Econometrics):
+                    - ss_mean: prior means m0 of the unconditional mean mu,
+                      as a dict {column: value} or a full vector. Activates the
+                      reparameterization (y_t - mu) = sum_l A_l (y_{t-l} - mu)
+                      + e_t with mu ~ N(m0, V0) elementwise: the long-run
+                      attractor becomes an object with an informative prior
+                      (e.g. judgment on medium-term growth) instead of the
+                      estimation-sample mean, while cross-variable dynamics
+                      are untouched. Columns omitted from the dict get a
+                      diffuse prior (sd 1e3) centered on their sample mean.
+                    - ss_sd: prior standard deviations of mu (dict, vector or
+                      scalar broadcast; small = tight anchor).
+                When active the constant is removed (mu replaces it),
+                timetrend/exog/covid_mode="dummies" are rejected, and
+                hyperparameter selection is unavailable (no closed-form
+                marginal likelihood). Note the tension with soc/dio: those
+                shrink toward unit roots (no reversion at all) while the
+                steady-state prior anchors reversion to mu, so combining them
+                pulls in opposite directions and should be deliberate.
 
         b_exo : np.ndarray, optional
             Block exogeneity mask (n_endo x n_endo boolean array). If variable i does not depend
@@ -241,6 +261,29 @@ class BayesianVAR:
             self.exog = exog.to_numpy(dtype=float)
             self.n_exog_user = self.exog.shape[1]
 
+        # --- Steady-state (mean-adjusted) prior setup (Villani, 2009) --------
+        self.ss_active = self.prior_params.get("ss_mean") is not None
+        if self.ss_active:
+            if timetrend:
+                raise ValueError(
+                    "The steady-state prior replaces the deterministic block: "
+                    "timetrend=True is not supported."
+                )
+            if self.n_exog_user > 0:
+                raise ValueError(
+                    "The steady-state prior does not support exogenous "
+                    "regressors for now."
+                )
+            if covid_mode == "dummies":
+                raise ValueError(
+                    "The steady-state prior is incompatible with "
+                    "covid_mode='dummies' (exogenous dummies); use "
+                    "covid_mode='lenza-primiceri'."
+                )
+            self.ss_m0, self.ss_sd0 = self._parse_ss_prior(y)
+            # mu replaces the constant; the regression has no deterministic block
+            self.constant = False
+
         # --- COVID treatment setup -------------------------------------------
         if covid_mode not in (None, "lenza-primiceri", "dummies"):
             raise ValueError("covid_mode must be 'lenza-primiceri', 'dummies' or None.")
@@ -258,13 +301,17 @@ class BayesianVAR:
             self.n_exog_user = self.exog.shape[1]
 
         # Number of exogenous variables and coefficients
-        self.n_exo = int(constant) + int(timetrend) + self.n_exog_user
+        self.n_exo = int(self.constant) + int(self.timetrend) + self.n_exog_user
         self.ncoeff_eq = self.n_endo * self.lags + self.n_exo
         self.ncoeff = self.ncoeff_eq * self.n_endo
 
-        # Organize data into YX format
+        # Organize data into YX format. Under the steady-state prior the
+        # construction-time matrices are centered at the prior mean m0 (fixed
+        # prior moments cannot depend on the mu draws); the Gibbs sampler
+        # re-demeans at the current mu draw every sweep.
+        self._y_est = self.y - self.ss_m0 if self.ss_active else self.y
         self.yy, self.XX = prepare_data(
-            self.y, self.lags, self.constant, self.timetrend, self.exog
+            self._y_est, self.lags, self.constant, self.timetrend, self.exog
         )
 
         # Adjust dates to match YYact (accounting for lags)
@@ -286,8 +333,9 @@ class BayesianVAR:
         self.XX_w = self.XX * self.obs_weights[:, None] if self._covid_active else self.XX
 
         # Mean of the pre-sample rows consumed as initial lags: the anchor of
-        # the sum-of-coefficients / dummy-initial-observation priors.
-        self.ybar0 = self.y[: self.lags].mean(axis=0)
+        # the sum-of-coefficients / dummy-initial-observation priors (in
+        # deviations from m0 when the steady-state prior is active).
+        self.ybar0 = self._y_est[: self.lags].mean(axis=0)
 
         # Sum-of-coefficients / dummy-initial-observation pseudo-observations
         # (Doan-Litterman-Sims 1984; Sims 1993; BGR 2010; GLP 2015). Built from
@@ -327,6 +375,47 @@ class BayesianVAR:
         elif self.prior_type == 3:
             self.prior = NormalDiffusePrior(*args)
 
+    def _parse_ss_prior(self, y_df: pd.DataFrame):
+        """
+        Parse the ``ss_mean`` / ``ss_sd`` keys of the Villani (2009)
+        steady-state prior into aligned (m0, sd0) vectors.
+
+        Columns omitted from ``ss_mean`` receive a diffuse prior (sd 1e3)
+        centered on their sample mean; ``ss_sd`` accepts the same dict/vector
+        forms plus a scalar broadcast.
+        """
+        names = list(map(str, self.names))
+        n = self.n_endo
+        m0 = y_df.mean().to_numpy(dtype=float)
+        sd0 = np.full(n, 1e3)
+
+        def fill(target, spec, label):
+            if isinstance(spec, dict):
+                for key, val in spec.items():
+                    if str(key) not in names:
+                        raise ValueError(
+                            f"Unknown variable '{key}' in {label}; expected one of {names}."
+                        )
+                    target[names.index(str(key))] = float(val)
+            else:
+                arr = np.asarray(spec, dtype=float).ravel()
+                if arr.size == 1:
+                    target[:] = arr[0]
+                elif arr.size == n:
+                    target[:] = arr
+                else:
+                    raise ValueError(
+                        f"{label} must be a dict, a scalar or a length-{n} vector."
+                    )
+
+        fill(m0, self.prior_params["ss_mean"], "ss_mean")
+        ss_sd = self.prior_params.get("ss_sd")
+        if ss_sd is not None:
+            fill(sd0, ss_sd, "ss_sd")
+        if np.any(sd0 <= 0):
+            raise ValueError("ss_sd must be strictly positive.")
+        return m0, sd0
+
     # Hyperparameter values at or above this threshold (or None) switch the
     # corresponding dummy prior off entirely. The pure marginal-likelihood
     # ratio does not converge to the no-dummy value as the tightness goes to
@@ -334,7 +423,8 @@ class BayesianVAR:
     # information about Sigma), so "off" must mean absent, not merely loose.
     _SOC_DIO_OFF = 1e4
 
-    def _soc_dio_dummies(self, params: Optional[dict] = None):
+    def _soc_dio_dummies(self, params: Optional[dict] = None,
+                         ybar0: Optional[np.ndarray] = None):
         """
         Sum-of-coefficients and dummy-initial-observation pseudo-observations.
 
@@ -357,6 +447,7 @@ class BayesianVAR:
         ``(Yd, Xd)`` with zero rows when both are off.
         """
         params = self.prior_params if params is None else params
+        ybar0 = self.ybar0 if ybar0 is None else ybar0
         n, p, k = self.n_endo, self.lags, self.ncoeff_eq
         blocks_y, blocks_x = [], []
 
@@ -371,19 +462,19 @@ class BayesianVAR:
 
         mu = active("soc")
         if mu is not None:
-            Yd = np.diag(self.ybar0 / mu)
+            Yd = np.diag(ybar0 / mu)
             Xd = np.zeros((n, k))
             for lag in range(1, p + 1):
-                Xd[np.arange(n), (lag - 1) * n + np.arange(n)] = self.ybar0 / mu
+                Xd[np.arange(n), (lag - 1) * n + np.arange(n)] = ybar0 / mu
             blocks_y.append(Yd)
             blocks_x.append(Xd)
 
         delta = active("dio")
         if delta is not None:
-            Yd = (self.ybar0 / delta)[None, :]
+            Yd = (ybar0 / delta)[None, :]
             Xd = np.zeros((1, k))
             for lag in range(1, p + 1):
-                Xd[0, (lag - 1) * n: lag * n] = self.ybar0 / delta
+                Xd[0, (lag - 1) * n: lag * n] = ybar0 / delta
             if self.constant:
                 Xd[0, n * p] = 1.0 / delta
             blocks_y.append(Yd)
@@ -580,16 +671,133 @@ class BayesianVAR:
         """Reshape vectorized beta into coefficient matrix."""
         return beta_vec.reshape((ncoeff_eq, N), order='F')
 
+    def _sample_posterior_ss(self, plot_coefficients: bool = False) -> dict:
+        """
+        Gibbs sampler for the steady-state (mean-adjusted) BVAR of Villani
+        (2009, Journal of Applied Econometrics).
+
+        Model: ``(y_t - mu) = A_1 (y_{t-1} - mu) + ... + A_p (y_{t-p} - mu) + e_t``
+        with ``mu ~ N(m0, V0)`` elementwise, so the unconditional mean *is* mu.
+        Two conditional blocks alternate:
+
+        1. ``(B, Sigma) | mu``: the data are demeaned at the current mu draw,
+           the lag matrix is rebuilt with no deterministic block, and the
+           existing posterior machinery is reused verbatim (prior moments stay
+           fixed at their m0-centered calibration; COVID weights and SOC/DIO
+           dummies apply to the demeaned system, with ybar0 recomputed from
+           the demeaned pre-sample each sweep).
+        2. ``mu | (B, Sigma)`` (Villani eqs. 6-8): with
+           ``U = I - A_1 - ... - A_p`` each observation contributes the
+           regression ``y_t - sum_l A_l y_{t-l} = U mu + e_t``; combined with
+           N(m0, V0) this gives a normal conditional posterior (COVID rows are
+           GLS-downweighted by their volatility scales).
+        """
+        rng = self._rng("posterior")
+        n, p = self.n_endo, self.lags
+        b_prior, H_prior = self.prior["b0"], self.prior["H"]
+        Scale0, alpha0 = self.prior.get("Scale0"), self.prior.get("alpha0")
+        invH = inv(H_prior)
+        Sigma = self.Sigma_ols.copy()
+        m0, sd0 = self.ss_m0, self.ss_sd0
+        iV0 = np.diag(1.0 / sd0 ** 2)
+
+        # Level lag matrices (independent of mu) for the mu | (B, Sigma) block.
+        yy_lev, XX_lev = prepare_data(self.y, p, False, False, None)
+        w2 = self.obs_weights ** 2                 # 1 / s_t^2 (ones without COVID)
+        sum_w2 = float(np.sum(w2))
+
+        mu = self.y[p:].mean(axis=0)               # start at the sample mean
+        self.beta_draws, self.Sigma_draws = [], []
+        self.resid_draws, self.mu_draws = [], []
+
+        for _ in tqdm(range(self.post_draws), desc="Sampling Posterior"):
+            # --- block 1: (B, Sigma) | mu on the demeaned system -------------
+            ytil = self.y - mu
+            yy_t, XX_t = prepare_data(ytil, p, False, False, None)
+            yy_wt = yy_t * self.obs_weights[:, None] if self._covid_active else yy_t
+            XX_wt = XX_t * self.obs_weights[:, None] if self._covid_active else XX_t
+            Yd, Xd = self._soc_dio_dummies(ybar0=ytil[:p].mean(axis=0))
+            if Yd.shape[0]:
+                yy_fit = np.vstack([yy_wt, Yd])
+                XX_fit = np.vstack([XX_wt, Xd])
+            else:
+                yy_fit, XX_fit = yy_wt, XX_wt
+
+            XtX = XX_fit.T @ XX_fit
+            b_ols = np.linalg.solve(XtX, XX_fit.T @ yy_fit).flatten(order="F")
+            Sigma_inv = inv(Sigma) if self.prior_type in [2, 3] else inv(self.Sigma_ols)
+            V_post = inv(invH + np.kron(Sigma_inv, XtX))
+            M_post = V_post @ (invH @ b_prior + np.kron(Sigma_inv, XtX) @ b_ols)
+
+            while True:
+                beta_vec = rng.multivariate_normal(mean=M_post, cov=V_post)
+                B = self.reshape_beta(beta_vec, self.ncoeff_eq, n)
+                Bcomp = self.build_companion_matrix(B, n, p)
+                if self.is_stable(Bcomp):
+                    break
+
+            resid = yy_t - XX_t @ B
+
+            if self.prior_type in [2, 3]:
+                resid_fit = yy_fit - XX_fit @ B
+                scale_term = resid_fit.T @ resid_fit
+                if self.prior_type == 2:
+                    scale_term += Scale0
+                    df = alpha0 + yy_fit.shape[0]
+                else:
+                    df = yy_fit.shape[0]
+                Sigma = invwishart.rvs(df=df, scale=scale_term, random_state=rng)
+
+            # --- block 2: mu | (B, Sigma) (Villani eqs. 6-8) ------------------
+            A_sum = sum(B[l * n:(l + 1) * n, :].T for l in range(p))
+            U = np.eye(n) - A_sum
+            W = yy_lev - XX_lev @ B                # y_t - sum_l A_l y_{t-l}
+            Sig_use = Sigma if self.prior_type in [2, 3] else self.Sigma_ols
+            UiS = U.T @ inv(Sig_use)
+            prec = iV0 + sum_w2 * (UiS @ U)
+            rhs = iV0 @ m0 + UiS @ (W * w2[:, None]).sum(axis=0)
+            V_mu = inv(prec)
+            V_mu = 0.5 * (V_mu + V_mu.T)
+            mu = rng.multivariate_normal(np.linalg.solve(prec, rhs), V_mu)
+
+            self.beta_draws.append(beta_vec)
+            self.Sigma_draws.append(Sigma if self.prior_type in [2, 3] else self.Sigma_ols)
+            self.resid_draws.append(resid)
+            self.mu_draws.append(mu)
+
+        self.beta_draws = np.array(self.beta_draws[self.burnin:])
+        self.Sigma_draws = np.array(self.Sigma_draws[self.burnin:])
+        self.resid_draws = np.array(self.resid_draws[self.burnin:])
+        self.mu_draws = np.array(self.mu_draws[self.burnin:])
+
+        if plot_coefficients:
+            print("Note: plot_coefficients is not available under the "
+                  "steady-state prior (no deterministic block).")
+
+        return {
+            "beta_draws": self.beta_draws,
+            "Sigma_draws": self.Sigma_draws,
+            "resid_draws": self.resid_draws,
+            "mu_draws": self.mu_draws,
+        }
+
     def sample_posterior(self, plot_coefficients: bool = False) -> dict:
         """
         Draw posterior samples for VAR coefficients and variance-covariance matrix.
-        
+
         Ensures draws are stable (companion eigenvalues < 1).
+
+        Under the steady-state prior (Villani, 2009) the sampler alternates a
+        (B, Sigma) | mu block on data demeaned at the current mu draw with the
+        linear-Gaussian mu | (B, Sigma) update, and the returned dict gains a
+        "mu_draws" key.
 
         Returns
         -------
             dict: A dictionary with keys "beta_draws" and "Sigma_draws", each containing posterior samples.
         """
+        if self.ss_active:
+            return self._sample_posterior_ss(plot_coefficients)
         rng = self._rng("posterior")
         XtX = self.XX_fit.T @ self.XX_fit
         b_ols, Sigma_ols = self.b_ols, self.Sigma_ols
@@ -923,6 +1131,26 @@ class BayesianVAR:
             beta_vec = self.beta_draws[i]
             Sigma = self.Sigma_draws[i]
             B = self.reshape_beta(beta_vec, k, n_endo)
+
+            if self.ss_active:
+                # Villani (2009): iterate the companion on deviations from the
+                # draw's steady state mu, then add mu back. Forecasts converge
+                # to the mu draws by construction.
+                mu_i = self.mu_draws[i]
+                D_det = (self.y[-lags:, :] - mu_i).tolist()
+                D_sto = (self.y[-lags:, :] - mu_i).tolist()
+                for h in range(fhor):
+                    X_det = np.hstack([D_det[-lag] for lag in range(1, lags + 1)])
+                    d_det = X_det @ B
+                    self.mean_forecasts[i, h, :] = mu_i + d_det
+                    D_det.append(d_det)
+
+                    X_sto = np.hstack([D_sto[-lag] for lag in range(1, lags + 1)])
+                    eps = rng.multivariate_normal(mean=np.zeros(n_endo), cov=Sigma)
+                    d_sto = X_sto @ B + eps
+                    self.forecasts[i, h, :] = mu_i + d_sto
+                    D_sto.append(d_sto)
+                continue
 
             # Two separate lag histories: the no-shock path must iterate on its
             # own deterministic values (Canova-Ferroni's `frcst_no_shock`),
@@ -1334,6 +1562,12 @@ class BayesianVAR:
         can search over them; they enter unweighted, and the Lenza-Primiceri
         Jacobian applies to the actual rows only.
         """
+        if self.ss_active:
+            raise NotImplementedError(
+                "The analytic marginal likelihood has no closed form under the "
+                "steady-state prior (Villani, 2009); ss_mean/ss_sd are set by "
+                "the user, never selected."
+            )
         if self.b_exo is not None:
             raise ValueError(
                 "The analytic marginal likelihood requires a Kronecker prior; "
@@ -1404,6 +1638,12 @@ class BayesianVAR:
         dict with keys ``params`` (optimal values), ``log_ml``,
         ``initial_log_ml`` and ``success``.
         """
+        if self.ss_active:
+            raise NotImplementedError(
+                "select_hyperparameters is not available under the steady-state "
+                "prior (no closed-form marginal likelihood); ss_mean/ss_sd are "
+                "set by the user, never selected."
+            )
         allowed = {"lamda1", "lamda3", "lamda4", "soc", "dio"}
         select = list(select)
         bad = [s for s in select if s not in allowed]

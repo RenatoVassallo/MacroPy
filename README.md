@@ -36,6 +36,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 - Full reproducibility via a `seed` argument, and tidy `forecast_frame()` / `conditional_forecast_frame()` outputs for production pipelines  
 - Data-driven prior tightness via marginal-likelihood maximization (Giannone, Lenza & Primiceri, 2015)  
 - Sum-of-coefficients and dummy-initial-observation priors (Doan-Litterman-Sims, 1984; Sims, 1993) to anchor long-horizon forecasts to current levels  
+- Steady-state (mean-adjusted) prior (Villani, 2009) to anchor the long-run mean to judgment, e.g. medium-term growth forecasts  
 
 ---
 
@@ -44,7 +45,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.9/macropy-0.1.9-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.10/macropy-0.1.10-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -90,5 +91,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.9.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.10.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

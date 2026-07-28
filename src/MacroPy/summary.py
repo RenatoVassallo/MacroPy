@@ -121,6 +121,13 @@ Version {__version__}
                 shown = ", ".join(f"{s:.1f}" for s in scales[:6])
                 more = ", ..." if len(scales) > 6 else ""
                 summary += f"- **COVID Volatility Scales**: [{shown}{more}]\n"
+        if getattr(settings, "ss_active", False):
+            pairs = ", ".join(
+                f"{name}: {m:g} (sd {s:g})"
+                for name, m, s in zip(settings.names, settings.ss_m0, settings.ss_sd0)
+            )
+            summary += (f"- **Steady-State Prior (Villani 2009)**: "
+                        f"mu ~ N(m0, V0) with {pairs}\n")
         if getattr(settings, "n_soc_dio", 0) > 0:
             pp = settings.prior_params
             parts = []

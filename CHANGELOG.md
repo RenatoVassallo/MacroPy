@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.10] - 2026-07-28
+
+### Added
+- **Steady-state (mean-adjusted) prior** for `BayesianVAR` (Villani, 2009,
+  Journal of Applied Econometrics) via the optional `prior_params` keys
+  `ss_mean` / `ss_sd`. The model is reparameterized as
+  `(y_t - mu) = sum_l A_l (y_{t-l} - mu) + e_t` with `mu ~ N(m0, V0)`
+  elementwise, so the VAR's long-run attractor carries an informative prior
+  (e.g. judgment on medium-term growth for variables in structural slowdown)
+  instead of defaulting to the estimation-sample mean, while cross-variable
+  dynamics stay untouched. `ss_mean` accepts a dict `{column: value}` or a
+  vector (omitted columns get a diffuse sd-1e3 prior centered on their sample
+  mean); `ss_sd` accepts the same forms plus a scalar broadcast.
+- **Gibbs sampler extension** for all prior types: a `(B, Sigma) | mu` block
+  on data demeaned at the current draw (reusing the existing prior/posterior
+  machinery, COVID weights and SOC/DIO dummies on the demeaned system) and the
+  linear-Gaussian `mu | (B, Sigma)` update of Villani eqs. 6-8, GLS-weighted
+  under the Lenza-Primiceri COVID mode. `mu_draws` is stored and returned.
+- **Downstream integration**: forecasts iterate the companion on deviations
+  and add the draw's `mu` back (long-horizon paths converge to the `mu` draws
+  by construction); conditional forecasts work unchanged in levels;
+  `model_summary()` reports the steady-state prior.
+- **Guards**: the constant is removed when the prior is active (`mu` replaces
+  it); `timetrend`, user `exog` and `covid_mode="dummies"` raise clear errors;
+  `log_marginal_likelihood` / `select_hyperparameters` raise
+  `NotImplementedError` (no closed form; `ss_mean`/`ss_sd` are user-set, never
+  selected). Docstrings note the deliberate tension with `soc`/`dio` (unit
+  roots vs reversion to `mu`).
+- Tests: judgment anchoring at h=40 vs sample-mean reversion, exact backward
+  compatibility, conditional forecasts under the prior, combinations with the
+  COVID mode and SOC/DIO, and all guards.
+
 ## [0.1.9] - 2026-07-28
 
 ### Added
