@@ -35,6 +35,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 - COVID-window treatment: Lenza & Primiceri (2022) volatility scaling or automatic time dummies  
 - Full reproducibility via a `seed` argument, and tidy `forecast_frame()` / `conditional_forecast_frame()` outputs for production pipelines  
 - Data-driven prior tightness via marginal-likelihood maximization (Giannone, Lenza & Primiceri, 2015)  
+- Sum-of-coefficients and dummy-initial-observation priors (Doan-Litterman-Sims, 1984; Sims, 1993) to anchor long-horizon forecasts to current levels  
 
 ---
 
@@ -43,7 +44,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.8/macropy-0.1.8-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.9/macropy-0.1.9-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -78,6 +79,7 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - 🧮 [`tutorial_cvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_cvar.ipynb): Classic VAR estimation  
 - 🧠 [`tutorial_bvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar.ipynb): Bayesian VAR estimation and forecasting  
 - 🦠 [`tutorial_bvar_pandemic.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar_pandemic.ipynb): COVID treatment — pandemic dummies vs Lenza-Primiceri (2022) volatility scaling  
+- ⚓ [`tutorial_bvar_socdio.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar_socdio.ipynb): Sum-of-coefficients and dummy-initial-observation priors, with a pseudo out-of-sample conditional forecasting exercise  
 - 🏗️ [`tutorial_bpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bpvar.ipynb): Hierarchical Bayesian Panel VAR  
 - 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
 - ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
@@ -88,5 +90,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.8.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.9.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

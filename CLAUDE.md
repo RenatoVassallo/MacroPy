@@ -7,6 +7,7 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
 - `src/MacroPy/bvar.py` — `BayesianVAR`: Minnesota / Normal-Wishart / Normal-Diffuse
   priors (built in `priors.py`), block exogeneity, exogenous regressors, COVID
   treatment (Lenza-Primiceri volatility scaling or auto time dummies),
+  SOC/DIO dummy priors (`soc`/`dio` in `prior_params`),
   Waggoner-Zha conditional forecasts (full shock distribution; verified
   draw-by-draw against the Canova-Ferroni `BVAR_` toolbox — reference ports in
   `tests/test_bvar_production.py`), tidy `forecast_frame()` /

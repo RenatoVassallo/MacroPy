@@ -400,3 +400,125 @@ def test_select_hyperparameters_glp():
     # lamda2 has no analytic marginal likelihood: must refuse, not silently fit.
     with pytest.raises(ValueError, match="lamda2"):
         m.select_hyperparameters(select=("lamda1", "lamda2"))
+
+
+# ---------------------------------------------------------------------------
+# Sum-of-coefficients (SOC) and dummy-initial-observation (DIO) priors
+# (Doan-Litterman-Sims 1984; Sims 1993; BGR 2010; GLP 2015)
+# ---------------------------------------------------------------------------
+
+def test_soc_tight_imposes_unit_sum():
+    """A. mu -> 0 shrinks A_1 + ... + A_p toward the identity."""
+    df, *_ = simulate_var(T=300, seed=5)
+    df = df + 5.0                       # nonzero levels so ybar0 anchors bite
+    n, lags = 3, 2
+    m = BayesianVAR(df, lags=lags, prior_type=2,
+                    prior_params=dict(LOOSE_PRIOR, soc=0.05),
+                    post_draws=300, burnin=0.5, seed=6)
+    m.sample_posterior()
+    B = m.reshape_beta(m.beta_draws.mean(axis=0), m.ncoeff_eq, n)
+    sumA = sum(B[l * n:(l + 1) * n, :].T for l in range(lags))
+    assert np.max(np.abs(sumA - np.eye(n))) < 0.10
+
+
+def test_soc_dio_anchor_to_current_level():
+    """B. With a mean that falls late in the sample (China-GDP style), SOC/DIO
+    anchor long-horizon forecasts to the last observed level while the plain
+    model reverts toward the estimation-sample mean.
+
+    The GLP-default tightness (soc = dio = 1) improves the anchoring
+    directionally; tight dummies (0.1) impose it almost fully. The default
+    cannot flip the path by itself here because with levels around 8 the
+    data's information about the coefficient sum outweighs a mu = 1 dummy by
+    roughly T / p^2.
+    """
+    rng = np.random.default_rng(11)
+    T, n_fall = 150, 25
+    local_mean = np.concatenate([np.full(T - n_fall, 8.0),
+                                 np.linspace(8.0, 3.0, n_fall)])
+    u = np.zeros((T, 2))
+    for t in range(1, T):
+        u[t] = 0.5 * u[t - 1] + rng.standard_normal(2) * 0.8
+    y = local_mean[:, None] + u + np.array([0.0, 1.0])
+    df = pd.DataFrame(y, index=pd.date_range("2005-01-01", periods=T, freq="MS"),
+                      columns=["y1", "y2"])
+    fhor = 20
+    pp = {"mn_mean": 0.0, "lamda1": 0.4, "lamda2": 1.0, "lamda3": 1.0,
+          "lamda4": 1e5}
+    kw = dict(lags=2, prior_type=2, post_draws=300, burnin=0.5, seed=12)
+    y_last = df.iloc[-1].to_numpy()
+
+    def endpoint_dist(params):
+        m = BayesianVAR(df, prior_params=params, **kw)
+        m.sample_posterior()
+        m.forecast(fhor=fhor, plot_forecast=False)
+        fc = m.mean_forecasts.mean(axis=0)[-1]
+        return fc, np.abs(fc - y_last).max()
+
+    fc_plain, d_plain = endpoint_dist(pp)
+    _, d_glp = endpoint_dist(dict(pp, soc=1.0, dio=1.0))
+    _, d_tight = endpoint_dist(dict(pp, soc=0.1, dio=0.1))
+
+    assert (fc_plain - y_last).min() > 1.0   # plain reverts up toward the mean
+    assert d_glp < d_plain                   # GLP default improves the anchor
+    assert d_tight < 0.4 * d_plain           # tight dummies anchor to level
+
+
+def test_soc_dio_marginal_likelihood_correction():
+    """C. Off-threshold reproduces the no-dummy ML; finite values change it;
+    selection over soc works."""
+    df, *_ = simulate_var(T=300, seed=8)
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=dict(LOOSE_PRIOR),
+                    post_draws=50, seed=2)
+    base = m.log_marginal_likelihood()
+    off = m.log_marginal_likelihood(dict(LOOSE_PRIOR, soc=1e5, dio=1e5))
+    assert off == pytest.approx(base, abs=1e-6)
+    on = m.log_marginal_likelihood(dict(LOOSE_PRIOR, soc=1.0, dio=1.0))
+    assert abs(on - base) > 1.0
+
+    res = m.select_hyperparameters(select=("lamda1", "soc"), verbose=False)
+    assert res["success"] and np.isfinite(res["log_ml"])
+    assert 0.1 <= res["params"]["soc"] <= 10.0
+    assert m.prior_params["soc"] == pytest.approx(res["params"]["soc"])
+    assert m.n_soc_dio > 0                       # fit matrices rebuilt
+
+
+def test_soc_dio_backward_compatibility():
+    """D. Absent keys leave everything untouched; None behaves like absent."""
+    df, *_ = simulate_var(T=250, seed=3)
+    kw = dict(lags=2, prior_type=2, post_draws=200, burnin=0.5, seed=42)
+
+    m_absent = BayesianVAR(df, prior_params=dict(LOOSE_PRIOR), **kw)
+    m_none = BayesianVAR(df, prior_params=dict(LOOSE_PRIOR, soc=None, dio=None),
+                         **kw)
+    assert m_absent.n_soc_dio == 0 and m_none.n_soc_dio == 0
+    assert m_absent.yy_fit is m_absent.yy_w      # no augmentation at all
+    m_absent.sample_posterior()
+    m_none.sample_posterior()
+    assert np.array_equal(m_absent.beta_draws, m_none.beta_draws)
+    pd.testing.assert_frame_equal(m_absent.forecast_frame(fhor=6),
+                                  m_none.forecast_frame(fhor=6))
+
+
+def test_soc_dio_combinations():
+    """E. SOC+DIO with COVID scaling, conditional frames and b_exo run clean."""
+    common = dict(T=252, seed=4, start="2002-01-01")
+    df, *_ = simulate_var(covid_scale=15.0, covid_start="2020-03-01",
+                          covid_len=16, **common)
+    pp = dict(LOOSE_PRIOR, soc=1.0, dio=1.0)
+    m = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp,
+                    covid_window=("2020-03", "2021-06"),
+                    covid_mode="lenza-primiceri",
+                    post_draws=200, burnin=0.5, seed=9)
+    m.sample_posterior()
+    assert m.yy_fit.shape[0] == m.yy.shape[0] + 4
+    frame = m.conditional_forecast_frame({"y1": [0.4, 0.3]}, fhor=6,
+                                         shock_uncertainty=False)
+    assert np.isfinite(frame[["mean", "median"]].to_numpy()).all()
+    assert frame.loc[("y1", 1), "median"] == pytest.approx(0.4, abs=1e-6)
+
+    block = np.array([[0, 1, 1], [0, 0, 0], [0, 0, 0]])
+    m_b = BayesianVAR(df, lags=2, prior_type=2, prior_params=pp, b_exo=block,
+                      post_draws=150, burnin=0.5, seed=9)
+    m_b.sample_posterior()
+    assert np.isfinite(m_b.beta_draws).all()

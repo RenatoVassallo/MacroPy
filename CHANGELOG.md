@@ -4,7 +4,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.9] - 2026-07-28
+
+### Added
+- **Sum-of-coefficients (SOC) and dummy-initial-observation (DIO) priors** for
+  `BayesianVAR` via the optional `prior_params` keys `soc` and `dio`
+  (Doan, Litterman & Sims, 1984; Sims, 1993; Banbura, Giannone & Reichlin,
+  2010; Giannone, Lenza & Primiceri, 2015). Implemented as dummy-observation
+  data augmentation anchored at the pre-sample means, so they work with every
+  `prior_type` and combine with block exogeneity and both COVID modes. They
+  shrink the VAR toward unit roots / no-change forecasts, anchoring
+  long-horizon paths to the current level instead of the estimation-sample
+  mean (the classic remedy for variables with a slowly falling mean, and what
+  makes larger systems safe to estimate). Convention: pseudo-data divided by
+  the hyperparameter (small = tight, 1 = GLP default, absent/None or >= 1e4 =
+  off).
+- `log_marginal_likelihood` applies the GLP (2015) dummy correction
+  ``log m(dummies + Y) - log m(dummies)`` when SOC/DIO are active (dummies
+  unweighted; the Lenza-Primiceri Jacobian stays on actual rows only), and
+  `select_hyperparameters` can now search over `soc` / `dio` (bounds
+  [0.1, 10], starting value 1 when off). Because the pseudo-observations
+  always carry degrees-of-freedom information about Sigma, the pure ratio
+  does not converge to the no-dummy value as the tightness grows; values
+  >= 1e4 therefore disable the priors exactly.
+- New tutorial `tutorials/tutorial_bvar_socdio.ipynb`: theory and pseudo-data
+  construction of both priors, their effect on posterior persistence, marginal-
+  likelihood selection of the tightness, and a pseudo out-of-sample conditional
+  forecasting exercise on the Peruvian system (with Lenza-Primiceri COVID
+  control) evaluated against realized data.
+- `model_summary()` reports active dummy priors; new tests cover the tight-SOC
+  unit-sum limit, level anchoring on a late-break mean, the ML correction and
+  off-switch, exact backward compatibility (bit-identical draws without the
+  new keys), and combinations with COVID modes, conditional frames and
+  `b_exo`.
+
+## [0.1.8] - 2026-07-28
 
 ### Added
 - **COVID treatment in `BayesianVAR`**: `covid_window` + `covid_mode`.

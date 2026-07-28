@@ -121,6 +121,14 @@ Version {__version__}
                 shown = ", ".join(f"{s:.1f}" for s in scales[:6])
                 more = ", ..." if len(scales) > 6 else ""
                 summary += f"- **COVID Volatility Scales**: [{shown}{more}]\n"
+        if getattr(settings, "n_soc_dio", 0) > 0:
+            pp = settings.prior_params
+            parts = []
+            if pp.get("soc") is not None:
+                parts.append(f"sum-of-coefficients (mu = {pp['soc']:g})")
+            if pp.get("dio") is not None:
+                parts.append(f"dummy-initial-observation (delta = {pp['dio']:g})")
+            summary += f"- **Dummy Priors**: {' + '.join(parts)}\n"
         if getattr(settings, "seed", None) is not None:
             summary += f"- **Random Seed**: {settings.seed}\n"
 

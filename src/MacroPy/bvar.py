@@ -86,6 +86,21 @@ class BayesianVAR:
                     - lamda2: Cross lag shrinkage
                     - lamda3: Lag decay
                     - lamda4: Constant term variance
+                Optional dummy-observation priors (absent/None = off; both are
+                implemented as pseudo-data divided by the hyperparameter, so
+                small = tight, 1 = the GLP default, values >= 1e4 disable):
+                    - soc: sum-of-coefficients tightness (Doan, Litterman &
+                      Sims, 1984; Banbura, Giannone & Reichlin, 2010). Shrinks
+                      A_1 + ... + A_p toward the identity, anchoring
+                      long-horizon forecasts to current levels instead of the
+                      estimation-sample mean.
+                    - dio: dummy-initial-observation / co-persistence tightness
+                      (Sims, 1993; Giannone, Lenza & Primiceri, 2015). Pushes
+                      toward the no-change forecast consistent with the initial
+                      conditions while still allowing cointegration.
+                Both work with every prior_type (they are data augmentation)
+                and with the COVID modes; the pseudo-observations are built
+                from the pre-sample means and enter estimation unweighted.
 
         b_exo : np.ndarray, optional
             Block exogeneity mask (n_endo x n_endo boolean array). If variable i does not depend
@@ -270,8 +285,19 @@ class BayesianVAR:
         self.yy_w = self.yy * self.obs_weights[:, None] if self._covid_active else self.yy
         self.XX_w = self.XX * self.obs_weights[:, None] if self._covid_active else self.XX
 
+        # Mean of the pre-sample rows consumed as initial lags: the anchor of
+        # the sum-of-coefficients / dummy-initial-observation priors.
+        self.ybar0 = self.y[: self.lags].mean(axis=0)
+
+        # Sum-of-coefficients / dummy-initial-observation pseudo-observations
+        # (Doan-Litterman-Sims 1984; Sims 1993; BGR 2010; GLP 2015). Built from
+        # the ACTUAL data only and appended unweighted to the estimation
+        # matrices; `yy_fit`/`XX_fit` feed every posterior computation while
+        # `yy_w`/`XX_w` keep feeding the prior-moment calibration.
+        self._rebuild_fit()
+
         # Compute OLS estimates for initial values
-        self.b_ols, self.Sigma_ols = estimate_ols(self.yy_w, self.XX_w)
+        self.b_ols, self.Sigma_ols = estimate_ols(self.yy_fit, self.XX_fit)
 
         # Select prior distribution
         prior_dict = {1: "Minnesota", 2: "Normal-Wishart", 3: "Normal-Diffuse"}
@@ -300,6 +326,83 @@ class BayesianVAR:
             self.prior = NormalWishartPrior(*args)
         elif self.prior_type == 3:
             self.prior = NormalDiffusePrior(*args)
+
+    # Hyperparameter values at or above this threshold (or None) switch the
+    # corresponding dummy prior off entirely. The pure marginal-likelihood
+    # ratio does not converge to the no-dummy value as the tightness goes to
+    # infinity (the pseudo-observations always carry degrees-of-freedom
+    # information about Sigma), so "off" must mean absent, not merely loose.
+    _SOC_DIO_OFF = 1e4
+
+    def _soc_dio_dummies(self, params: Optional[dict] = None):
+        """
+        Sum-of-coefficients and dummy-initial-observation pseudo-observations.
+
+        SOC (Doan, Litterman & Sims, 1984; hyperparameter ``soc`` = mu) adds one
+        row per variable: ``Yd[i] = (ybar0_i / mu) e_i`` with the same value on
+        variable i's position at every lag of ``Xd`` and zeros elsewhere. As
+        mu -> 0 it imposes A_1 + ... + A_p = I equation by equation (unit root,
+        no deterministic mean reversion).
+
+        DIO (Sims, 1993; hyperparameter ``dio`` = delta) adds a single
+        co-persistence row: ``Yd = ybar0' / delta``, the same values at every
+        lag of ``Xd``, ``1 / delta`` on the constant, zeros on trend and
+        exogenous columns. As delta -> 0 it pushes toward the no-change
+        forecast consistent with initial conditions while still allowing
+        cointegration.
+
+        Both are divided by the hyperparameter: small = tight, large = loose,
+        1 = the Giannone-Lenza-Primiceri (2015) default, and values >=
+        ``_SOC_DIO_OFF`` (or None / absent) disable the prior. Returns
+        ``(Yd, Xd)`` with zero rows when both are off.
+        """
+        params = self.prior_params if params is None else params
+        n, p, k = self.n_endo, self.lags, self.ncoeff_eq
+        blocks_y, blocks_x = [], []
+
+        def active(key):
+            v = params.get(key, None)
+            if v is None:
+                return None
+            v = float(v)
+            if v <= 0:
+                raise ValueError(f"prior_params['{key}'] must be positive.")
+            return v if v < self._SOC_DIO_OFF else None
+
+        mu = active("soc")
+        if mu is not None:
+            Yd = np.diag(self.ybar0 / mu)
+            Xd = np.zeros((n, k))
+            for lag in range(1, p + 1):
+                Xd[np.arange(n), (lag - 1) * n + np.arange(n)] = self.ybar0 / mu
+            blocks_y.append(Yd)
+            blocks_x.append(Xd)
+
+        delta = active("dio")
+        if delta is not None:
+            Yd = (self.ybar0 / delta)[None, :]
+            Xd = np.zeros((1, k))
+            for lag in range(1, p + 1):
+                Xd[0, (lag - 1) * n: lag * n] = self.ybar0 / delta
+            if self.constant:
+                Xd[0, n * p] = 1.0 / delta
+            blocks_y.append(Yd)
+            blocks_x.append(Xd)
+
+        if not blocks_y:
+            return np.zeros((0, n)), np.zeros((0, k))
+        return np.vstack(blocks_y), np.vstack(blocks_x)
+
+    def _rebuild_fit(self):
+        """Append the SOC/DIO pseudo-observations to the estimation matrices."""
+        Yd, Xd = self._soc_dio_dummies()
+        self.n_soc_dio = Yd.shape[0]
+        if self.n_soc_dio == 0:
+            self.yy_fit = self.yy_w
+            self.XX_fit = self.XX_w
+        else:
+            self.yy_fit = np.vstack([self.yy_w, Yd])
+            self.XX_fit = np.vstack([self.XX_w, Xd])
 
     @staticmethod
     def _parse_covid_window(covid_window) -> Tuple[pd.Timestamp, pd.Timestamp]:
@@ -488,7 +591,7 @@ class BayesianVAR:
             dict: A dictionary with keys "beta_draws" and "Sigma_draws", each containing posterior samples.
         """
         rng = self._rng("posterior")
-        XtX = self.XX_w.T @ self.XX_w
+        XtX = self.XX_fit.T @ self.XX_fit
         b_ols, Sigma_ols = self.b_ols, self.Sigma_ols
         b_prior, H_prior = self.prior["b0"], self.prior["H"]
         Scale0, alpha0 = self.prior.get("Scale0"), self.prior.get("alpha0")
@@ -519,15 +622,18 @@ class BayesianVAR:
 
             # Draw Sigma if applicable
             if self.prior_type in [2, 3]:
-                # GLS-weighted residuals: homoskedastic units, so Sigma keeps
-                # its ordinary-times scale under the COVID reweighting.
-                resid_fit = (self.yy_w - self.XX_w @ B) if self._covid_active else resid
+                # Augmented residuals: GLS-weighted rows (homoskedastic units,
+                # so Sigma keeps its ordinary-times scale under the COVID
+                # reweighting) plus the SOC/DIO pseudo-observations, which are
+                # data for the posterior of both B and Sigma.
+                need_fit = self._covid_active or self.n_soc_dio > 0
+                resid_fit = (self.yy_fit - self.XX_fit @ B) if need_fit else resid
                 scale_term = resid_fit.T @ resid_fit
                 if self.prior_type == 2:
                     scale_term += Scale0
-                    df = alpha0 + self.yy.shape[0]
+                    df = alpha0 + self.yy_fit.shape[0]
                 else:
-                    df = self.yy.shape[0]
+                    df = self.yy_fit.shape[0]
                 Sigma = invwishart.rvs(df=df, scale=scale_term, random_state=rng)
 
             # Store draws
@@ -1219,6 +1325,14 @@ class BayesianVAR:
         Lenza-Primiceri COVID mode the estimated volatility scales are applied,
         so the value refers to the same reweighted likelihood used in
         estimation.
+
+        When ``soc`` / ``dio`` dummy priors are active (in ``prior_params`` or
+        in the dict passed here), the marginal likelihood of the *actual* data
+        is the GLP (2015) ratio ``log m(dummies + Y) - log m(dummies)``, both
+        terms under the same base NW moments. The dummies are rebuilt from the
+        supplied hyperparameters on every call, so `select_hyperparameters`
+        can search over them; they enter unweighted, and the Lenza-Primiceri
+        Jacobian applies to the actual rows only.
         """
         if self.b_exo is not None:
             raise ValueError(
@@ -1229,7 +1343,20 @@ class BayesianVAR:
         moments = nw_conjugate_moments(self.yy, self.XX, self.lags,
                                        self.n_endo, params)
         w = self.obs_weights if self._covid_active else None
-        return nw_log_marginal_likelihood(self.yy, self.XX, moments, obs_weights=w)
+
+        Yd, Xd = self._soc_dio_dummies(params)
+        if Yd.shape[0] == 0:
+            return nw_log_marginal_likelihood(self.yy, self.XX, moments,
+                                              obs_weights=w)
+        yy_aug = np.vstack([self.yy, Yd])
+        XX_aug = np.vstack([self.XX, Xd])
+        w_aug = None
+        if w is not None:
+            w_aug = np.concatenate([w, np.ones(Yd.shape[0])])
+        log_m_all = nw_log_marginal_likelihood(yy_aug, XX_aug, moments,
+                                               obs_weights=w_aug)
+        log_m_dum = nw_log_marginal_likelihood(Yd, Xd, moments)
+        return log_m_all - log_m_dum
 
     def select_hyperparameters(
         self,
@@ -1253,7 +1380,10 @@ class BayesianVAR:
         ``lamda2`` (own-versus-cross asymmetry) breaks the Kronecker structure
         that makes the marginal likelihood analytic (Kadiyala & Karlsson,
         1997), so it cannot be selected here; it keeps its current value in
-        the sampling prior. Selectable: ``lamda1``, ``lamda3``, ``lamda4``.
+        the sampling prior. Selectable: ``lamda1``, ``lamda3``, ``lamda4``,
+        and the dummy-prior tightnesses ``soc`` / ``dio`` (their marginal
+        likelihood uses the GLP dummy correction; starting value 1 when the
+        prior is currently off).
 
         Parameters
         ----------
@@ -1261,9 +1391,11 @@ class BayesianVAR:
             Hyperparameters to optimize.
         bounds : dict, optional
             ``{name: (low, high)}`` overrides of the default search bounds
-            ``lamda1 in [0.01, 5], lamda3 in [0.1, 5], lamda4 in [1, 1e6]``.
+            ``lamda1 in [0.01, 5], lamda3 in [0.1, 5], lamda4 in [1, 1e6],
+            soc / dio in [0.1, 10]``.
         update : bool, default=True
-            Write the optimum into `prior_params` and rebuild the prior.
+            Write the optimum into `prior_params` and rebuild the prior (and
+            the SOC/DIO pseudo-observations when those are selected).
         verbose : bool, default=True
             Print the selected values.
 
@@ -1272,7 +1404,7 @@ class BayesianVAR:
         dict with keys ``params`` (optimal values), ``log_ml``,
         ``initial_log_ml`` and ``success``.
         """
-        allowed = {"lamda1", "lamda3", "lamda4"}
+        allowed = {"lamda1", "lamda3", "lamda4", "soc", "dio"}
         select = list(select)
         bad = [s for s in select if s not in allowed]
         if bad:
@@ -1283,9 +1415,11 @@ class BayesianVAR:
                 "marginal likelihood."
             )
         default_bounds = {"lamda1": (0.01, 5.0), "lamda3": (0.1, 5.0),
-                          "lamda4": (1.0, 1e6)}
+                          "lamda4": (1.0, 1e6),
+                          "soc": (0.1, 10.0), "dio": (0.1, 10.0)}
         if bounds:
             default_bounds.update(bounds)
+        default_start = {"soc": 1.0, "dio": 1.0}
 
         initial_log_ml = self.log_marginal_likelihood()
 
@@ -1296,7 +1430,8 @@ class BayesianVAR:
             val = self.log_marginal_likelihood(trial)
             return 1e12 if not np.isfinite(val) else -val
 
-        x0 = np.log([float(self.prior_params.get(s, 0.2)) for s in select])
+        x0 = np.log([float(self.prior_params.get(s) or default_start.get(s, 0.2))
+                     for s in select])
         log_bounds = [tuple(np.log(default_bounds[s])) for s in select]
         x0 = np.clip(x0, [b[0] for b in log_bounds], [b[1] for b in log_bounds])
 
@@ -1310,6 +1445,8 @@ class BayesianVAR:
         }
         if update:
             self.prior_params.update(best)
+            self._rebuild_fit()
+            self.b_ols, self.Sigma_ols = estimate_ols(self.yy_fit, self.XX_fit)
             self._build_prior()
         if verbose:
             shown = ", ".join(f"{k} = {v:.4g}" for k, v in best.items())
