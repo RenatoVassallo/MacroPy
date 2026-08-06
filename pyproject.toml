@@ -1,6 +1,6 @@
 [project]
 name = "MacroPy"
-version = "0.1.10"
+version = "0.1.11"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -76,3 +76,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Bundled X-13ARIMA-SEATS binaries (Census source build), one per platform;
+# discovered at runtime via MacroPy.x13.x13_path().
+MacroPy = ["bin/*/x13as", "bin/*/x13as.exe"]
