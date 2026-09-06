@@ -431,6 +431,12 @@ class ClarkModel(StateSpaceModel):
     """
     Clark (1987) unobserved components model. Two variants:
 
+    .. note::
+        For trend-cycle decomposition (classical or Bayesian, including the
+        pandemic treatment), prefer :class:`MacroPy.uc.UCTrendCycle`, which
+        supersedes this class for that use case; `ClarkModel` remains as a
+        general state-space building block (and for the seasonal variant).
+
     - `seasonality=False` (4 states): drift g_t (RW), trend tau_t (RW with
       drift), cycle c_t (AR(2)).
     - `seasonality=True` (7 states): same plus trigonometric seasonality
@@ -637,6 +643,13 @@ class BayesianStateSpace:
     conjugate priors on shock variances and (optionally) a Normal prior on
     AR coefficients of a cycle block.
 
+    .. note::
+        For UC trend-cycle models specifically, prefer
+        :class:`MacroPy.uc.UCTrendCycle`: a dedicated engine with calibrated
+        priors, a precision-based simulation smoother, COVID variance scales
+        and WAIC. This callable-based sampler remains for custom state-space
+        models outside that family.
+
     The user supplies:
       - `build(params)`: maps the dict of structural parameters to a
         `StateSpaceModel`.
@@ -778,6 +791,12 @@ class WatsonUC(StateSpaceModel):
     Watson (1986) unobserved components model: RW trend with constant drift
     plus an AR(2) cycle. Cleaner alternative to the 4-state Clark model for
     pedagogical and estimation purposes.
+
+    .. note::
+        Superseded by :class:`MacroPy.uc.UCTrendCycle` (Watson's model is the
+        limit ``drift="ar1"`` with ``rho_g`` fixed near zero and no drift
+        shock; the new engine adds priors, MCMC and model comparison). Kept
+        for backward compatibility.
 
     State alpha_t = (tau_t, c_t, c_{t-1})':
         tau_t = mu + tau_{t-1} + eta_tau

@@ -17,6 +17,8 @@ from .state_space import *
 from .plots_kalman import *
 from .tvarsv import *
 from .plots_tvarsv import *
+from .uc import *
+from .plots_uc import *
 
 try:
     from .get_macrodata import *

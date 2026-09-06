@@ -159,6 +159,88 @@ $$
     return Markdown(summary)
 
 
+def _uc_equations(settings):
+    rho_line = (r"g_t &= \rho_g g_{t-1} + (1-\rho_g)\bar{g} + \zeta_t, "
+                r"& \zeta_t &\sim \mathcal{N}(0,\, \lambda_{\zeta,t}\sigma_\zeta^2)"
+                if settings.drift == "ar1" else
+                r"g_t &= g_{t-1} + \zeta_t, "
+                r"& \zeta_t &\sim \mathcal{N}(0,\, \lambda_{\zeta,t}\sigma_\zeta^2)")
+    eta_line = (r"\tau_t &= \tau_{t-1} + g_{t-1} + \eta_t, "
+                r"& \eta_t &\sim \mathcal{N}(0,\, \lambda_{\eta,t}\sigma_\eta^2)"
+                if settings.level_noise else
+                r"\tau_t &= \tau_{t-1} + g_{t-1}")
+    return (r"""
+\begin{align*}
+y_t &= \tau_t + c_t \\
+""" + eta_line + r" \\" + "\n" + rho_line + r" \\" + "\n"
+        + r"""c_t &= \phi_1 c_{t-1} + \phi_2 c_{t-2} + \varepsilon_t,
+& \varepsilon_t &\sim \mathcal{N}(0,\, \lambda_{c,t}\sigma_c^2)
+\end{align*}
+""")
+
+
+def generate_uc_summary(settings):
+    """
+    Generate a structured Markdown summary for the UC trend-cycle model,
+    matching the layout of :func:`generate_summary`.
+    """
+    linkedin_text = "Renato Vassallo"
+    linkedin_url = "https://www.linkedin.com/in/renatovassallo"
+
+    sample_start = settings.dates[0].date()
+    sample_end = settings.dates[-1].date()
+    drift_label = ("AR(1) around mean growth (mean-reverting)"
+                   if settings.drift == "ar1" else "Random walk (Clark, 1987)")
+    cycle_label = ("AR(2)" if settings.fix_phi is None else
+                   f"AR(2) fixed at ({settings.fix_phi[0]:g}, {settings.fix_phi[1]:g})")
+
+    summary = f"""
+**MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**
+Developed by [{linkedin_text}]({linkedin_url}) - Institute for Economic Analysis (IAE-CSIC)
+Version {__version__}
+
+---
+
+**Model Specifications**
+- **Model Type**: Unobserved-Components Trend-Cycle (Grant & Chan, 2017)
+- **Observed Series**: {settings.name}
+- **Trend Drift**: {drift_label}
+- **Trend-Level Shock**: {"Included" if settings.level_noise else "Excluded (smooth trend)"}
+- **Cycle**: {cycle_label}
+- **Sample Period**: {sample_start} to {sample_end} ({settings.T} observations)
+
+---
+
+**Bayesian Estimation Settings**
+- **Posterior Simulation**: Gibbs Sampling (precision-based simulation smoother)
+- **Prior Calibration Rules**: {"On (data-relative kappa rules)" if settings.calibrate else "Off (generic defaults)"}
+- **Total Draws**: {settings.post_draws}
+- **Burn-in**: {settings.burnin} ({settings.burnin / settings.post_draws:.0%})
+"""
+    if getattr(settings, "thin", 1) > 1:
+        summary += (f"- **Thinning**: every {settings.thin} sweeps "
+                    f"({settings.n_draws} draws stored)\n")
+    if settings.covid_t0 is not None:
+        t0_date = settings.dates[settings.covid_t0].date()
+        comps = ", ".join(settings.covid_components)
+        summary += (f"- **COVID Treatment**: Lenza-Primiceri variance scales "
+                    f"from {t0_date} on ({comps}; {settings.covid_nfree} free "
+                    f"scales, griddy Gibbs)\n")
+    if getattr(settings, "seed", None) is not None:
+        summary += f"- **Random Seed**: {settings.seed}\n"
+
+    summary += f"""
+---
+
+**Model Equations**
+
+$$
+{_uc_equations(settings)}
+$$
+"""
+    return Markdown(summary)
+
+
 def _tvarsv_equations():
     return r"""
 \begin{align*}
