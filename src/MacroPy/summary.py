@@ -1,6 +1,13 @@
+import pandas as pd
 from importlib.metadata import PackageNotFoundError, version
 
 from IPython.display import Markdown
+
+__all__ = [
+    "generate_summary",
+    "generate_uc_summary",
+    "generate_tvarsv_summary",
+]
 
 try:
     __version__ = version("MacroPy")
@@ -76,8 +83,8 @@ def generate_summary(settings):
 """
         equations = _panel_equations()
     else:
-        sample_start = settings.dates[settings.lags].date()
-        sample_end = settings.dates[-1].date()
+        sample_start = pd.Timestamp(settings.dates[settings.lags]).date()
+        sample_end = pd.Timestamp(settings.dates[-1]).date()
         obs_text = f"{settings.yy.shape[0]} observations"
         panel_block = ""
         equations = _var_equations(settings)

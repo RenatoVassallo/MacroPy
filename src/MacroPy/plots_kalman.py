@@ -1,8 +1,8 @@
 """
 Plotting helpers for trend-cycle decomposition (Kalman class).
 
-All figures use the BSE palette so they drop into the beamer deck without
-re-styling. Functions accept a `savepath` argument that, when given,
+All figures use MacroPy's palette and style (``MacroPy.style``), applied only
+inside each call. Functions accept a `savepath` argument that, when given,
 writes a tight-bbox PDF (vector) suitable for `\includegraphics` in LaTeX.
 """
 
@@ -14,37 +14,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# BSE palette (matches beamerthemebse.sty)
-BSE_TEAL = "#233746"
-BSE_TEAL_SOFT = "#2D4253"
-BSE_ORANGE = "#E78033"
-BSE_NAVY = "#1F3D5C"
-BSE_GRAY = "#4A4A4A"
-BSE_LIGHT = "#F4F4F4"
+from .style import PALETTE, set_bse_style, styled
 
-
-def set_bse_style() -> None:
-    """Apply matplotlib rcParams matching the BSE beamer theme."""
-    plt.rcParams.update({
-        "figure.dpi": 110,
-        "savefig.dpi": 200,
-        "font.family": "serif",
-        "font.size": 11,
-        "axes.titlesize": 12,
-        "axes.titleweight": "bold",
-        "axes.titlecolor": BSE_TEAL,
-        "axes.labelcolor": BSE_GRAY,
-        "axes.edgecolor": BSE_GRAY,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.grid": True,
-        "grid.color": "#dddddd",
-        "grid.linewidth": 0.6,
-        "xtick.color": BSE_GRAY,
-        "ytick.color": BSE_GRAY,
-        "legend.frameon": False,
-        "legend.fontsize": 10,
-    })
+# Backwards-compatible names for the palette (see MacroPy.style.PALETTE).
+BSE_TEAL = PALETTE["ink"]
+BSE_TEAL_SOFT = PALETTE["ink_soft"]
+BSE_ORANGE = PALETTE["accent"]
+BSE_NAVY = PALETTE["navy"]
+BSE_GRAY = PALETTE["gray"]
+BSE_LIGHT = PALETTE["light"]
 
 
 def _save(fig, savepath: Optional[str]) -> None:
@@ -52,11 +30,11 @@ def _save(fig, savepath: Optional[str]) -> None:
         fig.savefig(savepath, bbox_inches="tight")
 
 
+@styled
 def plot_series_with_trend(time, y, trend, *, gap=None, y_label: str = "Log GDP × 100",
                            title: str = "", savepath: Optional[str] = None,
                            trend_band: Optional[tuple] = None):
     """Two-panel layout: observed + trend (left), gap or cycle (right)."""
-    set_bse_style()
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.6), constrained_layout=True)
     axes[0].plot(time, y, color="black", lw=1.0, label="Observado")
     axes[0].plot(time, trend, color=BSE_ORANGE, lw=1.8, label="Tendencia")
@@ -79,11 +57,11 @@ def plot_series_with_trend(time, y, trend, *, gap=None, y_label: str = "Log GDP 
     return fig, axes
 
 
+@styled
 def plot_decomposition(time, *, trend, cycle, seasonal=None, irregular=None,
                        y=None, title: str = "",
                        savepath: Optional[str] = None):
     """Two-by-two grid showing each component of the decomposition."""
-    set_bse_style()
     n_panels = 2 + int(seasonal is not None) + int(irregular is not None)
     nrows = 2 if n_panels >= 3 else 1
     ncols = 2
@@ -120,12 +98,12 @@ def plot_decomposition(time, *, trend, cycle, seasonal=None, irregular=None,
     return fig, ax
 
 
+@styled
 def plot_with_bands(time, mean, std, *, level: float = 1.96, label: str = "",
                     color: str = BSE_ORANGE, ax=None,
                     savepath: Optional[str] = None):
     """Line with symmetric confidence/credibility band."""
     if ax is None:
-        set_bse_style()
         fig, ax = plt.subplots(figsize=(8, 3.2), constrained_layout=True)
     else:
         fig = ax.figure
@@ -138,6 +116,7 @@ def plot_with_bands(time, mean, std, *, level: float = 1.96, label: str = "",
     return fig, ax
 
 
+@styled
 def plot_kalman_step(t_idx: int, y, a_pred, P_pred, a_filt, P_filt,
                      state_idx: int = 0, window: int = 30,
                      savepath: Optional[str] = None):
@@ -146,7 +125,6 @@ def plot_kalman_step(t_idx: int, y, a_pred, P_pred, a_filt, P_filt,
     state density, the new observation, and the posterior (filtered) density.
     Useful for animating the recursion in a slide.
     """
-    set_bse_style()
     fig, ax = plt.subplots(1, 2, figsize=(11, 3.4), constrained_layout=True)
     t0 = max(0, t_idx - window)
     rng = np.arange(t0, t_idx + 1)
@@ -176,9 +154,9 @@ def _gauss_pdf(x, mu, sigma):
     return np.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
 
 
+@styled
 def plot_posterior_traces(draws: dict, savepath: Optional[str] = None):
     """Trace and posterior histogram for each scalar parameter in `draws`."""
-    set_bse_style()
     keys = list(draws.keys())
     n = len(keys)
     fig, ax = plt.subplots(n, 2, figsize=(10, 1.8 * n), constrained_layout=True)
@@ -200,5 +178,5 @@ __all__ = [
     "plot_with_bands",
     "plot_kalman_step",
     "plot_posterior_traces",
-    "BSE_TEAL", "BSE_ORANGE", "BSE_NAVY", "BSE_GRAY",
+    "BSE_TEAL", "BSE_TEAL_SOFT", "BSE_ORANGE", "BSE_NAVY", "BSE_GRAY", "BSE_LIGHT",
 ]

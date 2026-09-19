@@ -21,11 +21,13 @@ from typing import List, Optional, Tuple, Union
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .style import styled
 from .plots_kalman import (
     set_bse_style, _save, BSE_TEAL, BSE_ORANGE, BSE_NAVY, BSE_GRAY,
 )
 
 
+@styled
 def plot_regimes(model, shade_regime: int = 2, prob_threshold: float = 0.5,
                  show_prob: bool = True, regime_label: Optional[str] = None,
                  prob_label: Optional[str] = None, var_label: Optional[str] = None,
@@ -54,7 +56,6 @@ def plot_regimes(model, shade_regime: int = 2, prob_threshold: float = 0.5,
         Figure title.
     """
     model._require_draws()
-    set_bse_style()
     p2 = model.regime_probability()              # P(regime 2) = P(above threshold)
     prob = p2 if shade_regime == 2 else (1.0 - p2)
     if regime_label is None:
@@ -90,6 +91,7 @@ def plot_regimes(model, shade_regime: int = 2, prob_threshold: float = 0.5,
     return fig, ax
 
 
+@styled
 def plot_volatility(model, cred: float = 0.68, log_scale: bool = False,
                     ylabel: str = r"$\lambda_t$",
                     title: str = r"Common stochastic volatility  $\lambda_t$",
@@ -101,7 +103,6 @@ def plot_volatility(model, cred: float = 0.68, log_scale: bool = False,
     several orders of magnitude.
     """
     model._require_draws()
-    set_bse_style()
     vp = model.volatility_path(cred=cred)
     fig, ax = plt.subplots(figsize=(11, 3.6), constrained_layout=True)
     ax.fill_between(vp.index, vp["lower"], vp["upper"], color=BSE_ORANGE,
@@ -116,6 +117,7 @@ def plot_volatility(model, cred: float = 0.68, log_scale: bool = False,
     return fig, ax
 
 
+@styled
 def plot_irfs(model, shock: Union[str, int] = "uncertainty",
               response_vars: Optional[List[Union[str, int]]] = None,
               cred: float = 0.68,
@@ -141,7 +143,6 @@ def plot_irfs(model, shock: Union[str, int] = "uncertainty",
     """
     if not hasattr(model, "irf"):
         raise RuntimeError("Call compute_irfs() before plot_irfs().")
-    set_bse_style()
     names = list(model.names)
 
     # response-variable selection

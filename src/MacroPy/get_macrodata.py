@@ -416,6 +416,10 @@ def get_fred_data(series_codes, series_names, frequency, api_key, start_period='
     if end_period is None:
         end_period = datetime.datetime.now().strftime("%Y-%m")
 
+    if not api_key:
+        raise ValueError(
+            "FRED API key missing: pass api_key=... (for example read FRED_KEY from a .env "
+            "file with python-dotenv). Free keys: https://fred.stlouisfed.org/docs/api/api_key.html")
     fred = fa.Fred(api_key=api_key)
     df_fred = pd.DataFrame()
 
@@ -442,6 +446,13 @@ import io
 import time
 from functools import reduce
 import pycountry
+
+__all__ = [
+    "get_bcrp_data",
+    "get_fred_data",
+    "get_bis_data",
+    "get_bis_data_single",
+]
 
 BASE_URL = "https://stats.bis.org/api/v1/data"
 

@@ -1,6 +1,14 @@
 import numpy as np
 import pandas as pd
 
+__all__ = [
+    "prepare_data",
+    "estimate_ols",
+    "prepare_panel_unit_data",
+    "prepare_panel_data",
+    "coefficients_by_lag",
+]
+
 
 def prepare_data(YY, lags, constant=True, timetrend=False, exog=None):
     """
@@ -337,3 +345,37 @@ def prepare_panel_data(
         "endog_names": endog,
         "exo_names": exog,
     }
+
+
+def coefficients_by_lag(B, n, p, constant=True):
+    """
+    Split a MacroPy coefficient matrix into lag matrices and the constant.
+
+    MacroPy stacks the regressors as ``[y_{t-1}, ..., y_{t-p}, constant, trend,
+    exog]`` (``prepare_data``), so the constant sits **after** the lags in
+    ``B`` (k x n, one column per equation). Many textbooks put it in the first
+    row instead; this helper isolates the user from the layout.
+
+    Parameters
+    ----------
+    B : array (k x n)
+        Coefficients by equation in columns, e.g. ``b_ols.reshape((k, n),
+        order="F")`` in ``ClassicVAR`` or ``beta_draws[d].reshape(n, k).T`` in
+        ``BayesianVAR``.
+    n, p : int
+        Number of variables and lags.
+    constant : bool, default=True
+        Whether the model has a constant (the row right after the lags).
+
+    Returns
+    -------
+    phis : list of p arrays (n x n)
+        ``phis[l - 1][i, j]`` is the coefficient on variable ``j`` at lag ``l``
+        in equation ``i``.
+    c : array (n,) or None
+        The constant, or None when ``constant=False``.
+    """
+    B = np.asarray(B)
+    phis = [B[lag * n:(lag + 1) * n, :].T for lag in range(p)]
+    c = B[n * p, :].copy() if constant else None
+    return phis, c

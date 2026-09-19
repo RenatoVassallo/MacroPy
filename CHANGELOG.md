@@ -4,6 +4,219 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-09-19
+
+Minor-version bump: figures are now matplotlib objects that are returned
+rather than displayed, nothing is plotted by default, the public API is an
+explicit list, and the ClassicVAR bootstrap bands change (see below).
+`statsmodels` is now a declared dependency: `seasonal_adjust` needs it and it
+used to arrive only through plotnine.
+
+### Changed (figures and API)
+- **One graphics backend: matplotlib.** `plots.py` no longer uses plotnine or
+  mizani (both dropped from the dependencies). `generate_series_plot`,
+  `generate_coeff_plot`, `generate_exog_coeff_plot`, `generate_panel_coeff_plots`,
+  `generate_irf_plots`, `generate_fevd_plot`, `generate_hd_plot` and
+  `generate_forecast_plots` return matplotlib `(fig, axes)` (a list of them for
+  IRFs and per-lag coefficient plots) instead of ggplot objects.
+- **Figures are returned, never displayed.** No plotting path calls
+  `IPython.display`: `plot_series`, `plot_unit_series` and
+  `plot_exog_posteriors` return `(fig, axes)`, and the figures made by
+  `compute_*`, `forecast` and `conditional_forecast` are stored in
+  `model.figures`. Notebooks show them at the end of the cell; scripts call
+  `plt.show()`.
+- **Nothing is drawn by default.** `plot_fevd`, `plot_hd` and `plot_forecast`
+  now default to False in `ClassicVAR`, `BayesianVAR` and `BayesianPanelVAR`
+  (the other `plot_*` flags already did).
+- **No global style changes.** Every plotting function (including
+  `plots_kalman`, `plots_uc` and `plots_tvarsv`) runs inside
+  `macropy_style()`, a `plt.rc_context`, and none calls `set_bse_style()`.
+  `MacroPy.use_own_style = False` keeps the caller's style untouched;
+  `set_bse_style()` remains as an explicit, global opt-in.
+- **Explicit public API.** Every module defines `__all__` and
+  `MacroPy/__init__.py` imports names explicitly instead of nine `import *`.
+  Names that leaked through the star imports (`np`, `pd`, plotnine objects)
+  are no longer attributes of `MacroPy`.
+- `SmoothLocalProjections.plot_irfs` and `plot_irf_with_confidence` return
+  `(fig, ax)` instead of calling `plt.show()`, and `cross_validate_lambda` only
+  plots with `plot=True` (the figure goes to `cv_figure`).
+- `model_summary()` works with string date indexes (it called `.date()` on
+  them); `generate_series_plot` converts such indexes to dates.
+- Historical-decomposition plots use the last T dates (after the lags); they
+  used the first T, shifted by p periods. Forecast fans start at the last
+  observation, and panel-VAR unconditional forecasts no longer use the
+  conditional colour.
+
+### Deprecated
+- `lamda1`..`lamda4` in `prior_params` and in
+  `select_hyperparameters(select=...)`: use `lambda1`..`lambda4`. The old keys
+  still work and emit a `DeprecationWarning`; `model.prior_params` stores the
+  new keys. Tutorials and course notebooks are migrated.
+
+### Fixed (numerical results change)
+- `ClassicVAR.compute_irfs(bstrap=True)` now uses the **recursive-design**
+  residual bootstrap: each artificial sample iterates the estimated VAR from
+  the observed initial conditions with resampled, centred residuals. Before,
+  the sample was built from fitted values on the *observed* lags and then
+  re-lagged with `prepare_data`, an errors-in-variables problem that attenuated
+  the autoregressive coefficients and inflated `Sigma` and the Cholesky impact
+  (about +28 % on the diagonal in a simulated VAR(1) with T = 2000, a bias that
+  does not vanish with T). Bootstrap bands from earlier versions should be
+  recomputed. On that example the 95 % impact bands are now [0.971, 1.032] and
+  [0.386, 0.410], around the true 1.0 and 0.4.
+- `ClassicVAR.compute_irfs(bstrap=False)` now draws `Sigma ~ IW(U'U, T - k)`
+  and then `b | Sigma ~ N(b_OLS, Sigma kron (X'X)^-1)`, so the impact matrix
+  carries uncertainty (it was a single point at h = 0).
+- `import MacroPy` no longer runs `warnings.filterwarnings("ignore")`, which
+  silenced warnings for the whole process (NumPy, pandas, user code).
+- No mutable default arguments: `BayesianVAR(prior_params=None)`,
+  `MinnesotaPrior`, `NormalWishartPrior` and `NormalDiffusePrior`.
+
+### Added
+- `ClassicVAR(seed=None, stable_only=True, progress=True)`: reproducible draws
+  per stage (`default_rng([seed, stage])`, as in `BayesianVAR`), explicit
+  filtering of explosive draws in both branches, and a switch for the progress
+  bar. Axis order of `ir_draws` documented: `[draw, horizon, variable, shock]`.
+- `BayesianVAR(progress=True)` to turn off the tqdm bars in rendered documents.
+- `prior_params` uses `lambda1`..`lambda4` and raises a `ValueError` on
+  unknown keys (`priors.normalize_prior_params`); see Deprecated.
+- `coefficients_by_lag(B, n, p, constant=True)` returns `(phis, c)` and
+  isolates the user from the layout (MacroPy puts the constant after the lags).
+- `py.typed` marker; `get_fred_data` says what to set when the API key is
+  missing.
+- `MacroPy.style`: public, overridable `PALETTE` (with an Okabe-Ito,
+  colour-blind-safe set for stacked FEVD and HD plots), `macropy_style()`,
+  `macropy_rcparams()` and the `styled` decorator.
+- `tests/test_plots.py`: figures are returned and stored, nothing is drawn by
+  default, global rcParams are untouched, `use_own_style` works, and the public
+  API is explicit.
+- `tests/test_quick_fixes.py`: the bootstrap recovers a known impact matrix,
+  Monte Carlo impact uncertainty, seed reproducibility, prior-parameter
+  hygiene, `coefficients_by_lag`, and no process-wide warning filter.
+
+### Added
+- **UC trend-cycle module** (`MacroPy.uc`): one engine, `UCTrendCycle`, covers
+  the whole decomposition ladder on the model
+  `y = tau + c`, `tau_t = tau_{t-1} + g_{t-1} + eta_t`,
+  `g_t = rho_g g_{t-1} + (1-rho_g) gbar + zeta_t`, AR(2) cycle, with
+  per-shock variance-scale paths `q_{i,t} = lambda_{i,t} sigma_i^2`.
+  Python port of the author's MATLAB `trend_cycle_toolbox` (building on
+  Grant & Chan 2017, JEDC, and Chan 2018).
+  - `hp_filter(y, lam)`: exact penalized-regression HP filter, and the
+    `UCTrendCycle.hp` preset showing the filter as a state-space model
+    (Harvey & Jaeger 1993); smoothed trends agree to ~1e-6.
+  - `UCTrendCycle.clark(y).fit_mle()`: Clark (1987) UC by exact integrated
+    maximum likelihood (precision identity), with an HP-based warm start, a
+    budget-capped derivative-free polish for the classic variance pile-up
+    (`polish_budget`; seconds instead of minutes at T ~ 300 with the same
+    optimum) and a tqdm progress bar (`progress`).
+  - `sample_posterior()`: Gibbs sampling with the Chan/McCausland
+    precision-based simulation smoother, truncated-normal AR(2)/drift
+    updates and inverse-gamma variances. The joint (tau, g) precision is
+    assembled stencil-by-stencil in interleaved order into banded storage
+    (bandwidth 4) and factored with scipy's banded Cholesky, the sparse
+    strategy of the MATLAB toolbox: assembly and draw are O(T) and
+    BLAS-independent (state draw ~0.1 ms at T ~ 200-300; 1000 sweeps of
+    the plain model in under a second, 20000 sweeps of a COVID model in
+    ~15 s). The banded system is verified against the dense reference
+    assembly at 1e-10 over random configurations, and the integrated
+    likelihood evaluates the minimized quadratic as a weighted residual
+    sum at the mode, avoiding catastrophic cancellation (agreement with
+    the independent Kalman filter ~1e-9 even on 100*log-level data). The
+    griddy-Gibbs COVID conditionals are fully vectorized over the grids
+    (verified against the brute-force full-path construction below 1e-9).
+    A `thin` argument stores every thin-th post burn-in sweep (MATLAB
+    toolbox convention); the docstring notes that thinning saves memory
+    rather than adding precision.
+  - **Prior-calibration kappa rules** (on by default): `sd(zeta) = 0.35 x
+    sd(13-quarter MA of dy)` and `sd(eta) = 0.10 x sd(zeta)`, computed on
+    the pre-COVID sample, replacing generic defaults that let the trend
+    chase the data.
+  - **COVID variance scales** (Lenza & Primiceri 2022): deterministic jump
+    paths `(lambda1, lambda2, lambda3, rho_decay)` per shock, sampled by
+    griddy Gibbs with log-normal shrinkage toward one on the trend
+    channels; `covid_t0="2020Q1"` activates them (the reference toolbox
+    convention: the two free scales cover 2020Q1-Q2 and the geometric tail
+    starts at the rebound).
+  - **Model comparison**: WAIC/DIC from the one-step-ahead predictive
+    decomposition (per-period Kalman contributions at each draw) and a
+    `compare_uc()` table; an independent Kalman filter cross-checks the
+    precision-based likelihood at ~1e-8 (asserted in tests).
+  - **Conditional forecasts** (`conditional_forecast` /
+    `conditional_forecast_frame`): Waggoner-Zha style restrictions on the
+    predictive distribution, per posterior draw (exact Gaussian conditioning
+    of the standardized future shocks via the SVD, minimum norm plus
+    null-space noise, mirroring `BayesianVAR.conditional_forecast`).
+    Supports hard values for future quarters (`conditions={"2027Q1": ...}`),
+    an `anchor_states` option that starts every path from the posterior
+    median final state (removing the current trend/cycle split uncertainty,
+    so fan charts of unobserved components start narrow and widen with the
+    horizon, the central-bank convention), and calendar-year average growth
+    targets
+    (`annual_growth={2026: 3.2, ...}`, with already-observed quarters of a
+    partially observed year entering as data). Restrictions hold to ~1e-13
+    along every draw; parameter and COVID-scale uncertainty integrated
+    draw by draw.
+  - Tidy outputs `decomposition_frame()` / `forecast_frame()`,
+    `model_summary()`, per-stage seeded reproducibility, plots in
+    `plots_uc.py` (`plot_uc_decomposition`, `plot_covid_scales`,
+    `plot_gap_comparison`).
+  - **Fan charts** (`plots_uc.plot_fan_chart`): central-bank style nested
+    prediction bands (BoE / BCRP Inflation Report look) from any draws
+    matrix, continuous with the observed history, with configurable
+    coverage levels, center line, reference annotations and fully
+    overridable labels. `method="normal"` draws band edges from a
+    per-horizon normal approximation and `smooth=` applies a light moving
+    average to the band half-widths, removing Monte Carlo jaggedness
+    without touching the central path. `plot_gap_comparison` gains recession shading
+    (`shade`) and dashed benchmark overlays (`extra_series`, e.g. the CBO
+    gap); `plot_uc_decomposition` gains `shade` and a `labels` dict for
+    non-English figures.
+  - **Band convention**: state bands default to the central 68% interval
+    (one posterior standard deviation) in `decomposition_frame()`,
+    `plot_uc_decomposition` and `plot_gap_comparison`, matching
+    `plot_covid_scales`; the coverage is always written in the legend, and
+    `outer_cred` adds a lighter nested band (e.g. 68% inside 90%). Trend and
+    cycle bands coincide by construction, since `c_t = y_t - tau_t` holds
+    draw by draw. The smoothed-state uncertainty behind them agrees with an
+    independent Kalman smoother (statsmodels) to ~5e-3 away from the
+    initial-condition window.
+- Dataset `datasets/USGDP_Data.csv` (US real GDP, quarterly, 1947 onward)
+  and executed tutorial `tutorials/tutorial_uc_gdp.ipynb`: a compact
+  four-rung ladder (HP, Clark MLE, Bayesian UC, COVID scales) on US GDP
+  downloaded live through the MacroPy FRED helper (`.env` key, with a
+  packaged-CSV fallback), benchmarked against NBER recession shading and
+  the CBO output gap (GDPC1 vs GDPPOT), with the pile-up exhibit and a
+  WAIC comparison.
+- Guidance notes on `ClarkModel`, `WatsonUC` and `BayesianStateSpace`
+  pointing trend-cycle use cases to the new engine (all remain available).
+- Validation: draw-level cross-check against the MATLAB toolbox's saved
+  Peru 1994-2025 UC-COVID posterior (same input series): every prior
+  hyperparameter identical to machine precision, including the calibrated
+  COVID grid bounds (the r2020 rule uses the first two pandemic growth
+  surprises, sample-std/var with N-1, plain rounding of the eta/zeta grid
+  ratios); posterior state medians within 0.12 log points, 90 percent
+  bands of equal width, lambda paths and AR dynamics at Monte Carlo error.
+  Gap range on US GDP 1947-2014 also matches the golden numbers
+  ([-6.7, 4.3] vs [-6.8, 4.3]). Tests cover HP equivalence, likelihood
+  agreement, MLE/Gibbs parameter recovery, kappa rules, COVID scale
+  absorption (pre-2020 decomposition protected) and reproducibility.
+
+### Fixed
+- `BayesianVAR` docstring for `b_exo`: the mask convention was documented backwards.
+  The implementation (`priors.MinnesotaPrior`) has always used `b_exo[i, j] = 1` to
+  exclude the lags of variable j from equation i (prior variance ~0), and `0` to leave
+  the coefficient free; the docstring said the opposite. New regression test
+  `tests/test_bvar_block_exog.py` pins the convention.
+
+## [0.1.11] - 2026-08-06
+
+### Added
+- **Seasonal adjustment** (`seasonal_adjust`): X-13ARIMA-SEATS (official US
+  Census Bureau binary bundled per platform, driven through statsmodels)
+  and STL as a dependency-light cross-check, returning a tidy
+  `SeasonalResult` with `observed = seasadj + seasonal` in original units.
+
 ## [0.1.10] - 2026-07-28
 
 ### Added

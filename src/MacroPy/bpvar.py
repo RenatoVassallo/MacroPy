@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from types import SimpleNamespace
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import Dict, List, Optional, Sequence, Union
 from IPython.display import display
@@ -17,6 +18,10 @@ from .plots import (
 )
 from .priors import HierarchicalPanelPrior, DiffusePanelExogenousPrior
 from .summary import generate_summary
+
+__all__ = [
+    "BayesianPanelVAR",
+]
 
 
 class BayesianPanelVAR:
@@ -136,6 +141,7 @@ class BayesianPanelVAR:
         self.hor = hor
         self.fhor = fhor
         self.irf_1std = irf_1std
+        self.figures = {}   # figures from the last plot_* calls
         self.max_tries = max_tries
         self.allow_unbalanced = allow_unbalanced
 
@@ -290,7 +296,7 @@ class BayesianPanelVAR:
             n_breaks=n_breaks,
             zero_line=zero_line,
         )
-        return display(plot)
+        return plot
 
     @staticmethod
     def _inverse(matrix):
@@ -566,9 +572,9 @@ class BayesianPanelVAR:
 
         if plot_coefficients:
             lambda_plot, lag_plots = generate_panel_coeff_plots(self)
-            display(lambda_plot)
-            for plot in lag_plots[:2]:
-                display(plot)
+            for fig, _ in lag_plots[2:]:
+                plt.close(fig)                         # show the first two lags only
+            self.figures["coefficients"] = (lambda_plot, lag_plots[:2])
             if len(lag_plots) > 2:
                 print("Note: Only showing the first 2 lag blocks of pooled mean coefficients.")
 
@@ -646,14 +652,14 @@ class BayesianPanelVAR:
                     irf_1std=self.irf_1std,
                     plot_label=f"Unit: {self.units[unit_idx]}",
                 )
-            for plot in generate_irf_plots(plot_settings, cred_interval):
-                display(plot)
+            self.figures.setdefault("irfs", []).extend(
+                generate_irf_plots(plot_settings, cred_interval))
 
         return self.ir_draws_pooled if pooled_request else self.ir_draws
 
     def compute_fevd(
         self,
-        plot_fevd: bool = True,
+        plot_fevd: bool = False,
         unit: Optional[Union[int, str]] = None,
         series_titles: Optional[List[str]] = None,
         shock_titles: Optional[List[str]] = None,
@@ -715,7 +721,7 @@ class BayesianPanelVAR:
                 shock_titles=shock_titles,
                 title=plot_title,
             )
-            display(fevd_plot)
+            self.figures["fevd"] = fevd_plot
 
         return {
             "fevd": self.fevd,
@@ -771,7 +777,7 @@ class BayesianPanelVAR:
         self,
         fhor: Optional[int] = None,
         future_exog: Optional[Union[pd.DataFrame, np.ndarray]] = None,
-        plot_forecast: bool = True,
+        plot_forecast: bool = False,
         cred_interval: List[float] = [0.68, 0.95],
         unit: Optional[Union[int, str]] = None,
         last_k: Optional[int] = None,
@@ -842,7 +848,7 @@ class BayesianPanelVAR:
                 zero_line=zero_line,
                 forecast_type=f"Unconditional ({self.units[unit_idx]})",
             )
-            display(forecast_plot)
+            self.figures.setdefault("forecast", []).append(forecast_plot)
 
         return {
             "forecast_draws": self.forecasts,

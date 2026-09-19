@@ -19,6 +19,7 @@ from typing import Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .style import styled
 from .plots_kalman import (
     set_bse_style, _save, BSE_TEAL, BSE_ORANGE, BSE_NAVY, BSE_GRAY,
 )
@@ -33,6 +34,7 @@ def _shade_spans(ax, shade):
         ax.axvspan(start, end, color=BSE_GRAY, alpha=0.14, lw=0)
 
 
+@styled
 def plot_uc_decomposition(model, cred: float = 0.68, show_drift: bool = False,
                           y_label: Optional[str] = None, title: str = "",
                           shade=None, labels: Optional[dict] = None,
@@ -59,7 +61,6 @@ def plot_uc_decomposition(model, cred: float = 0.68, show_drift: bool = False,
     lab.update(labels or {})
     frame = model.decomposition_frame(cred=cred)
     outer = model.decomposition_frame(cred=outer_cred) if outer_cred else None
-    set_bse_style()
     ncols = 3 if show_drift else 2
     fig, axes = plt.subplots(1, ncols, figsize=(11 if ncols == 2 else 14, 3.6),
                              constrained_layout=True)
@@ -106,6 +107,7 @@ def plot_uc_decomposition(model, cred: float = 0.68, show_drift: bool = False,
     return fig, axes
 
 
+@styled
 def plot_covid_scales(model, cred: float = 0.68, log_scale: bool = True,
                       window: int = 16, title: str = "COVID variance scales",
                       savepath: Optional[str] = None):
@@ -117,7 +119,6 @@ def plot_covid_scales(model, cred: float = 0.68, log_scale: bool = True,
     model._require_draws()
     if not model.covid_components:
         raise ValueError("The model has no COVID components (covid_t0 is None).")
-    set_bse_style()
     comps = list(model.covid_components)
     fig, axes = plt.subplots(1, len(comps), figsize=(4.2 * len(comps), 3.4),
                              constrained_layout=True, squeeze=False)
@@ -145,6 +146,7 @@ def plot_covid_scales(model, cred: float = 0.68, log_scale: bool = True,
     return fig, axes
 
 
+@styled
 def plot_gap_comparison(models: Dict[str, "object"], cred: Optional[float] = None,
                         title: str = "Output gap across models",
                         shade=None, extra_series: Optional[dict] = None,
@@ -158,7 +160,6 @@ def plot_gap_comparison(models: Dict[str, "object"], cred: Optional[float] = Non
     takes (start, end) date pairs (e.g. NBER recessions); ``extra_series``
     maps labels to pd.Series plotted dashed (e.g. the CBO output gap).
     """
-    set_bse_style()
     fig, ax = plt.subplots(figsize=(9, 3.8), constrained_layout=True)
     colors = [BSE_NAVY, BSE_ORANGE, "#2E7D32", "#7E57C2", "#4CAF50", BSE_GRAY]
     ax.axhline(0, color=BSE_GRAY, lw=0.7)
@@ -199,6 +200,7 @@ def _smooth_ma(x, w: int):
     return out
 
 
+@styled
 def plot_fan_chart(history, draws, dates,
                    bands=(0.90, 0.70, 0.50, 0.30, 0.10),
                    method: str = "quantile", smooth: Optional[int] = None,
@@ -247,7 +249,6 @@ def plot_fan_chart(history, draws, dates,
         Trim the plotted history start (the fan is unaffected).
     """
     import pandas as pd
-    set_bse_style()
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 4.2), constrained_layout=True)
     else:

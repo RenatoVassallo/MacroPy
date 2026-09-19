@@ -16,6 +16,10 @@ import platform
 import stat
 from pathlib import Path
 
+__all__ = [
+    "x13_path",
+]
+
 _BIN_DIR = Path(__file__).resolve().parent / "bin"
 
 

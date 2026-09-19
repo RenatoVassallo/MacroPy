@@ -1,13 +1,55 @@
+import warnings
+
 import numpy as np
 from scipy.special import multigammaln
 
-def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
+__all__ = [
+    "MinnesotaPrior",
+    "NormalWishartPrior",
+    "NormalDiffusePrior",
+    "HierarchicalPanelPrior",
+    "DiffusePanelExogenousPrior",
+    "normalize_prior_params",
+    "ar1_residual_std",
+    "nw_conjugate_moments",
+    "nw_log_marginal_likelihood",
+    "PRIOR_DEFAULTS",
+    "PRIOR_KEYS",
+]
+
+PRIOR_DEFAULTS = {"mn_mean": 1, "lambda1": 0.2, "lambda2": 0.5, "lambda3": 1, "lambda4": 1e5}
+PRIOR_KEYS = frozenset(PRIOR_DEFAULTS) | {"soc", "dio", "ss_mean", "ss_sd"}
+_DEPRECATED_KEYS = {"lamda" + str(i): "lambda" + str(i) for i in range(1, 5)}
+
+
+def normalize_prior_params(prior_params=None):
+    """
+    Copy of `prior_params` with the Minnesota defaults filled in.
+
+    The hyperparameters are ``lambda1``..``lambda4``. The old spelling
+    ``lamda1``..``lamda4`` still works but emits a DeprecationWarning, and
+    unknown keys raise a ValueError instead of being silently ignored.
+    """
+    params = dict(PRIOR_DEFAULTS)
+    for key, value in dict(prior_params or {}).items():
+        name = _DEPRECATED_KEYS.get(key, key)
+        if name != key:
+            warnings.warn(f"prior_params key {key!r} is deprecated; use {name!r}.",
+                          DeprecationWarning, stacklevel=3)
+        if name not in PRIOR_KEYS:
+            raise ValueError(f"Unknown prior_params key {key!r}. Valid keys: {sorted(PRIOR_KEYS)}.")
+        params[name] = value
+    return params
+
+
+def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params=None, b_exo=None):
     """Compute the Minnesota prior using a parameter dictionary, supporting block exogeneity."""
+    prior_params = normalize_prior_params(prior_params)
     mn_mean = prior_params.get("mn_mean", 1)
-    lamda1 = prior_params.get("lamda1", 0.2)
-    lamda2 = prior_params.get("lamda2", 0.5)
-    lamda3 = prior_params.get("lamda3", 1)
-    lamda4 = prior_params.get("lamda4", 1e5)
+    lambda1 = prior_params.get("lambda1", 0.2)
+    lambda2 = prior_params.get("lambda2", 0.5)
+    lambda3 = prior_params.get("lambda3", 1)
+    lambda4 = prior_params.get("lambda4", 1e5)
     small_var = 1e-9  # variance for excluded coefficients
 
     N = yy.shape[1]
@@ -28,14 +70,14 @@ def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1"
 
     # Deterministic/exogenous positions per equation (constant, trend, user
     # exog). They sit after the lag block and all receive a loose
-    # Normal(0, (std_i * lamda4)^2) prior so the likelihood drives the
+    # Normal(0, (std_i * lambda4)^2) prior so the likelihood drives the
     # posterior.
     n_exo_positions = ncoeff_eq - N * lags
 
     for i in range(N):  # equation i
         for e in range(n_exo_positions):
             exoIdx = i * ncoeff_eq + N * lags + e
-            H[exoIdx, exoIdx] = (std[i] * lamda4) ** 2
+            H[exoIdx, exoIdx] = (std[i] * lambda4) ** 2
 
         for lag in range(1, lags + 1):
             for j in range(N):  # variable j
@@ -47,21 +89,21 @@ def MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1"
                 if i == j:
                     # own lags
                     if lag == 1:
-                        H[coeffIdx, coeffIdx] = lamda1 ** 2
+                        H[coeffIdx, coeffIdx] = lambda1 ** 2
                     else:
-                        H[coeffIdx, coeffIdx] = (lamda1 / (lag ** lamda3)) ** 2
+                        H[coeffIdx, coeffIdx] = (lambda1 / (lag ** lambda3)) ** 2
                 else:
                     # cross lags
                     if lag == 1:
-                        H[coeffIdx, coeffIdx] = ((std[i] * lamda1 * lamda2) / std[j]) ** 2
+                        H[coeffIdx, coeffIdx] = ((std[i] * lambda1 * lambda2) / std[j]) ** 2
                     else:
-                        H[coeffIdx, coeffIdx] = ((std[i] * lamda1 * lamda2 / (lag ** lamda3)) / std[j]) ** 2
+                        H[coeffIdx, coeffIdx] = ((std[i] * lambda1 * lambda2 / (lag ** lambda3)) / std[j]) ** 2
 
     return {"prior_type": 1, "b0": b0, "H": H, "std_ar": std}
 
 
 
-def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
+def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params=None, b_exo=None):
     """ Compute the Minnesota-Inverse Wishart prior. """
     ny = yy.shape[1]
     mn_prior = MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo)
@@ -75,7 +117,7 @@ def NormalWishartPrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lam
     return {"prior_type": 2, "b0": b0, "H": H, "Scale0": Scale0, "alpha0": alpha0}
     
 
-def NormalDiffusePrior(yy, XX, lags, ncoeff_eq, prior_params={"mn_mean": 1, "lamda1": 0.2, "lamda2": 0.5, "lamda3": 1, "lamda4": 1e5}, b_exo=None):
+def NormalDiffusePrior(yy, XX, lags, ncoeff_eq, prior_params=None, b_exo=None):
     """ Compute the Minnesota-Inverse Wishart prior (diffuse version). """
     mn_prior = MinnesotaPrior(yy, XX, lags, ncoeff_eq, prior_params, b_exo)
     b0, H = mn_prior["b0"], mn_prior["H"]
@@ -114,12 +156,12 @@ def nw_conjugate_moments(yy, XX, lags, n_endo, prior_params):
     Notes
     -----
     The Kronecker structure ties shrinkage across equations, so the
-    own-versus-cross asymmetry ``lamda2`` of the sampling prior cannot be
-    represented here (Kadiyala & Karlsson, 1997); only ``mn_mean``, ``lamda1``
-    (overall tightness), ``lamda3`` (lag decay) and ``lamda4`` (deterministic /
+    own-versus-cross asymmetry ``lambda2`` of the sampling prior cannot be
+    represented here (Kadiyala & Karlsson, 1997); only ``mn_mean``, ``lambda1``
+    (overall tightness), ``lambda3`` (lag decay) and ``lambda4`` (deterministic /
     exogenous looseness) enter. Variance of the coefficient on lag ``l`` of
     variable ``j`` in any equation ``i`` is
-    ``Sigma_ii * lamda1^2 / (l^(2*lamda3) * sigma_j^2)``, with
+    ``Sigma_ii * lambda1^2 / (l^(2*lambda3) * sigma_j^2)``, with
     ``E[Sigma_ii] = sigma_i^2``.
 
     Returns
@@ -127,10 +169,11 @@ def nw_conjugate_moments(yy, XX, lags, n_endo, prior_params):
     dict with keys ``B0`` (k x n), ``omega_diag`` (k,), ``S0`` (n x n),
     ``nu0`` (scalar) and ``sigma`` (n,).
     """
+    prior_params = normalize_prior_params(prior_params)
     mn_mean = prior_params.get("mn_mean", 1)
-    lamda1 = prior_params.get("lamda1", 0.2)
-    lamda3 = prior_params.get("lamda3", 1)
-    lamda4 = prior_params.get("lamda4", 1e5)
+    lambda1 = prior_params.get("lambda1", 0.2)
+    lambda3 = prior_params.get("lambda3", 1)
+    lambda4 = prior_params.get("lambda4", 1e5)
 
     k = XX.shape[1]
     sigma = ar1_residual_std(yy, XX, n_endo)
@@ -139,9 +182,9 @@ def nw_conjugate_moments(yy, XX, lags, n_endo, prior_params):
     for lag in range(1, lags + 1):
         for j in range(n_endo):
             omega_diag[(lag - 1) * n_endo + j] = (
-                lamda1 ** 2 / (lag ** (2 * lamda3) * sigma[j] ** 2)
+                lambda1 ** 2 / (lag ** (2 * lambda3) * sigma[j] ** 2)
             )
-    omega_diag[n_endo * lags:] = lamda4 ** 2  # constant / trend / exog block
+    omega_diag[n_endo * lags:] = lambda4 ** 2  # constant / trend / exog block
 
     B0 = np.zeros((k, n_endo))
     for i in range(n_endo):

@@ -1,12 +1,23 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+from .style import PALETTE, macropy_style, styled
 from scipy import sparse
 from numpy.linalg import solve
 from scipy.stats import norm
 from IPython.display import Markdown, display
 
 from .data_handling import prepare_panel_data
+
+__all__ = [
+    "SmoothLocalProjections",
+    "PanelLocalProjections",
+    "smooth_lp_results",
+    "split_shock_signs",
+    "identify_boom_periods",
+    "cumulative_irf_ratio",
+]
 
 
 def _b_spline_basis(horizon_grid, lower_bound, upper_bound, num_knots, degree):
@@ -321,6 +332,7 @@ class SmoothLocalProjections:
         return conf
 
     @staticmethod
+    @styled
     def plot_irfs(results_list, labels=None, title="Impulse Response Comparison"):
         """
         Plot multiple IRFs from results.
@@ -329,19 +341,16 @@ class SmoothLocalProjections:
         - results_list: list of result dictionaries returned by `estimate()`
         - labels: optional list of labels for each IRF
         """
-        plt.figure(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
         for i, res in enumerate(results_list):
             label = labels[i] if labels else f"IRF {i+1}"
-            plt.plot(res['IR'], label=label, linewidth=2)
-
-        plt.axhline(0, color="black", linestyle="--")
-        plt.xlabel("Horizon")
-        plt.ylabel("Response")
-        plt.title(title)
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
+            ax.plot(res['IR'], label=label, linewidth=2)
+        ax.axhline(0, color=PALETTE["gray"], linestyle="--")
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel("Response")
+        ax.set_title(title)
+        ax.legend()
+        return fig, ax
 
 
 def _unique_preserve_order(values):
@@ -1084,7 +1093,7 @@ class PanelLocalProjections:
         ax.legend(frameon=False)
         return ax
         
-    def cross_validate_lambda(self, lambdas: list):
+    def cross_validate_lambda(self, lambdas: list, plot: bool = False):
         """
         Generalized Cross-Validation (GCV) to choose optimal lambda for smoothing.
 
@@ -1119,17 +1128,19 @@ class PanelLocalProjections:
         self.cv_lambdas = np.array(lambdas)
         self.cv_lambda_opt = lambdas[np.argmin(rss_list)]
         
-        # Step 3: Plot RSS vs lambda
-        plt.plot(self.cv_lambdas, self.cv_rss, '-o')
-        plt.title("Cross-Validated RSS for Lambda")
-        plt.xlabel("Lambda")
-        plt.ylabel("RSS")
-        plt.grid(True)
-        plt.show()
+        if plot:                                   # RSS against lambda
+            with macropy_style():
+                fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+                ax.plot(self.cv_lambdas, self.cv_rss, "-o", color=PALETTE["navy"])
+                ax.set_title("Cross-validated RSS by lambda")
+                ax.set_xlabel("Lambda")
+                ax.set_ylabel("RSS")
+            self.cv_figure = (fig, ax)
 
         return self.cv_lambda_opt
     
 
+    @styled
     def plot_irf_with_confidence(self, title="Impulse Response with Confidence Intervals", alpha=0.1):
         """
         Plot the impulse response function with confidence intervals.
@@ -1146,14 +1157,13 @@ class PanelLocalProjections:
 
         H = list(range(self.h_max + 1))
 
-        plt.figure(figsize=(8, 5))
-        plt.plot(H, IR, label="IRF", color="blue", linewidth=2)
-        plt.fill_between(H, CI[:, 0], CI[:, 1], color="blue", alpha=0.2, label=f"{int((1-alpha)*100)}% CI")
-        plt.axhline(0, color="black", linestyle="--", linewidth=1)
-        plt.xlabel("Horizon")
-        plt.ylabel("Response")
-        plt.title(title)
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
+        fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+        ax.plot(H, IR, label="IRF", color=PALETTE["median"], linewidth=2)
+        ax.fill_between(H, CI[:, 0], CI[:, 1], color=PALETTE["band"], alpha=0.25,
+                        label=f"{int((1-alpha)*100)}% CI")
+        ax.axhline(0, color=PALETTE["gray"], linestyle="--", linewidth=1)
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel("Response")
+        ax.set_title(title)
+        ax.legend()
+        return fig, ax

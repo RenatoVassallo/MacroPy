@@ -15,8 +15,8 @@ from scipy.stats import invwishart
 from MacroPy import BayesianVAR
 from MacroPy.priors import nw_log_marginal_likelihood
 
-LOOSE_PRIOR = {"mn_mean": 0.0, "lamda1": 5.0, "lamda2": 1.0, "lamda3": 1.0,
-               "lamda4": 1e5}
+LOOSE_PRIOR = {"mn_mean": 0.0, "lambda1": 5.0, "lambda2": 1.0, "lambda3": 1.0,
+               "lambda4": 1e5}
 
 
 def simulate_var(T=400, seed=0, start="2000-01-01", covid_scale=None,
@@ -395,11 +395,11 @@ def test_select_hyperparameters_glp():
 
     assert res["success"]
     assert res["log_ml"] >= res["initial_log_ml"] - 1e-6
-    assert m.prior_params["lamda1"] == pytest.approx(res["params"]["lamda1"])
+    assert m.prior_params["lambda1"] == pytest.approx(res["params"]["lambda1"])
 
-    # lamda2 has no analytic marginal likelihood: must refuse, not silently fit.
-    with pytest.raises(ValueError, match="lamda2"):
-        m.select_hyperparameters(select=("lamda1", "lamda2"))
+    # lambda2 has no analytic marginal likelihood: must refuse, not silently fit.
+    with pytest.raises(ValueError, match="lambda2"):
+        m.select_hyperparameters(select=("lambda1", "lambda2"))
 
 
 # ---------------------------------------------------------------------------
@@ -443,8 +443,8 @@ def test_soc_dio_anchor_to_current_level():
     df = pd.DataFrame(y, index=pd.date_range("2005-01-01", periods=T, freq="MS"),
                       columns=["y1", "y2"])
     fhor = 20
-    pp = {"mn_mean": 0.0, "lamda1": 0.4, "lamda2": 1.0, "lamda3": 1.0,
-          "lamda4": 1e5}
+    pp = {"mn_mean": 0.0, "lambda1": 0.4, "lambda2": 1.0, "lambda3": 1.0,
+          "lambda4": 1e5}
     kw = dict(lags=2, prior_type=2, post_draws=300, burnin=0.5, seed=12)
     y_last = df.iloc[-1].to_numpy()
 
@@ -476,7 +476,7 @@ def test_soc_dio_marginal_likelihood_correction():
     on = m.log_marginal_likelihood(dict(LOOSE_PRIOR, soc=1.0, dio=1.0))
     assert abs(on - base) > 1.0
 
-    res = m.select_hyperparameters(select=("lamda1", "soc"), verbose=False)
+    res = m.select_hyperparameters(select=("lambda1", "soc"), verbose=False)
     assert res["success"] and np.isfinite(res["log_ml"])
     assert 0.1 <= res["params"]["soc"] <= 10.0
     assert m.prior_params["soc"] == pytest.approx(res["params"]["soc"])
@@ -541,8 +541,8 @@ def _late_decline_df(T=200, n_fall=30, hi=8.0, lo=4.0, seed=13):
                         columns=["y1", "y2"])
 
 
-SS_BASE = {"mn_mean": 0.0, "lamda1": 0.5, "lamda2": 1.0, "lamda3": 1.0,
-           "lamda4": 1e5}
+SS_BASE = {"mn_mean": 0.0, "lambda1": 0.5, "lambda2": 1.0, "lambda3": 1.0,
+           "lambda4": 1e5}
 
 
 def test_ss_prior_anchors_to_judgment():

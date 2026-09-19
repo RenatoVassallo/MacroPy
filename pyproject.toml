@@ -1,6 +1,6 @@
 [project]
 name = "MacroPy"
-version = "0.1.11"
+version = "0.2.0"
 description = "MacroPy Toolbox for Macroeconometric Analysis in Python"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -31,11 +31,10 @@ dependencies = [
     "tqdm>=4.67",
     "joblib>=1.3",
     "matplotlib>=3.8",
+    "statsmodels>=0.14",
     "requests>=2.32",
     "fredapi>=0.5",
     "lxml>=5.3",
-    "plotnine>=0.14,<0.16",
-    "mizani>=0.13,<0.15",
     "ipython>=8",
     "pycountry>=23",
 ]
@@ -80,4 +79,4 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Bundled X-13ARIMA-SEATS binaries (Census source build), one per platform;
 # discovered at runtime via MacroPy.x13.x13_path().
-MacroPy = ["bin/*/x13as", "bin/*/x13as.exe"]
+MacroPy = ["bin/*/x13as", "bin/*/x13as.exe", "py.typed"]

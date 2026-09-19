@@ -24,6 +24,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
 ✅ Threshold VAR with stochastic volatility and uncertainty shocks (Alessandri & Mumtaz, 2019)  
+✅ Trend-cycle decomposition: HP filter, Clark UC by MLE, and Bayesian UC with COVID variance scales (Grant & Chan, 2017; Lenza & Primiceri, 2022)  
 ✅ High-quality plots using `ggplot2`-style, ready for LaTeX or reports  
 
 **Specifically for the `BayesianVAR` class:**
@@ -46,7 +47,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.1.11/macropy-0.1.11-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.2.0/macropy-0.2.0-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -85,6 +86,7 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - 🏗️ [`tutorial_bpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bpvar.ipynb): Hierarchical Bayesian Panel VAR  
 - 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
 - ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
+- 📐 [`tutorial_uc_gdp.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_uc_gdp.ipynb): Trend-cycle decomposition ladder on US GDP, from the HP filter to a Bayesian UC model with COVID variance scales
 
 ---
 
@@ -92,5 +94,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.1.11.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.2.0.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

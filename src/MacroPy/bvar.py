@@ -1,5 +1,8 @@
+import warnings
+
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import List, Optional, Dict, Tuple, Union
 from IPython.display import display
@@ -8,6 +11,8 @@ from scipy.optimize import minimize
 from scipy.stats import invwishart
 from .data_handling import prepare_data, estimate_ols
 from .priors import (
+    _DEPRECATED_KEYS,
+    normalize_prior_params,
     MinnesotaPrior,
     NormalWishartPrior,
     NormalDiffusePrior,
@@ -23,6 +28,10 @@ from .plots import (
 )
 from .summary import generate_summary
 
+__all__ = [
+    "BayesianVAR",
+]
+
 class BayesianVAR:
     def __init__(
         self,
@@ -31,13 +40,7 @@ class BayesianVAR:
         constant: bool = True,
         timetrend: bool = False,
         prior_type: int = 1,
-        prior_params: dict = {
-            "mn_mean": 1,
-            "lamda1": 0.2,
-            "lamda2": 0.5,
-            "lamda3": 1,
-            "lamda4": 1e5
-        },
+        prior_params: Optional[dict] = None,
         b_exo: np.ndarray = None,
         exog: Optional[pd.DataFrame] = None,
         post_draws: int = 5000,
@@ -50,6 +53,7 @@ class BayesianVAR:
         covid_scales: Optional[Union[float, np.ndarray]] = None,
         covid_n_free: int = 3,
         seed: Optional[int] = None,
+        progress: bool = True,
     ):
 
         """
@@ -82,10 +86,11 @@ class BayesianVAR:
         prior_params (dict): Dictionary of hyperparameters for the chosen prior.
                 Default for Minnesota:
                     - mn_mean: Prior mean on first own lag
-                    - lamda1: Own lag shrinkage
-                    - lamda2: Cross lag shrinkage
-                    - lamda3: Lag decay
-                    - lamda4: Constant term variance
+                    - lambda1: Own lag shrinkage (``lambda1``..``lambda4`` are accepted as aliases;
+                      unknown keys raise a ValueError)
+                    - lambda2: Cross lag shrinkage
+                    - lambda3: Lag decay
+                    - lambda4: Constant term variance
                 Optional dummy-observation priors (absent/None = off; both are
                 implemented as pseudo-data divided by the hyperparameter, so
                 small = tight, 1 = the GLP default, values >= 1e4 disable):
@@ -123,8 +128,11 @@ class BayesianVAR:
                 pulls in opposite directions and should be deliberate.
 
         b_exo : np.ndarray, optional
-            Block exogeneity mask (n_endo x n_endo boolean array). If variable i does not depend
-            on lagged values of variable j, set b_exo[i, j] = 0. Allows partial system specification.
+            Block exogeneity mask (n_endo x n_endo array of 0/1). Set b_exo[i, j] = 1 to
+            exclude the lags of variable j from equation i: their prior variance is set to
+            ~0, pinning them at the prior mean (zero for cross-variable lags). Entries equal
+            to 0 leave the coefficient free. For a small open economy with the external
+            variable ordered first, use b_exo[0, 1:] = 1.
 
         exog : pd.DataFrame, optional
             Additional exogenous regressors (e.g., time dummies, oil prices). Must share its
@@ -230,9 +238,11 @@ class BayesianVAR:
         self.prior_type = prior_type
         # Copy: the default dict is shared across instances and must never be
         # mutated in place (select_hyperparameters updates it per instance).
-        self.prior_params = dict(prior_params)
+        self.prior_params = normalize_prior_params(prior_params)
         self.b_exo = b_exo
         self.seed = seed
+        self.progress = progress
+        self.figures = {}   # figures from the last plot_* calls
         self.post_draws = post_draws
         self.burnin = int(burnin * post_draws)
         self.n_draws = self.post_draws - self.burnin  # Effective number of draws after burn-in
@@ -641,7 +651,7 @@ class BayesianVAR:
         plot = generate_exog_coeff_plot(
             self, bins=bins, ncol=ncol, series_titles=series_titles, palette=palette,
         )
-        display(plot)
+        self.figures["exog_coefficients"] = plot
         return plot
     
     @staticmethod
@@ -710,7 +720,7 @@ class BayesianVAR:
         self.beta_draws, self.Sigma_draws = [], []
         self.resid_draws, self.mu_draws = [], []
 
-        for _ in tqdm(range(self.post_draws), desc="Sampling Posterior"):
+        for _ in tqdm(range(self.post_draws), desc="Sampling Posterior", disable=not self.progress):
             # --- block 1: (B, Sigma) | mu on the demeaned system -------------
             ytil = self.y - mu
             yy_t, XX_t = prepare_data(ytil, p, False, False, None)
@@ -809,7 +819,7 @@ class BayesianVAR:
         self.Sigma_draws = []
         self.resid_draws = []
 
-        for _ in tqdm(range(self.post_draws), desc="Sampling Posterior"):
+        for _ in tqdm(range(self.post_draws), desc="Sampling Posterior", disable=not self.progress):
             Sigma_inv = inv(Sigma) if self.prior_type in [2, 3] else inv(Sigma_ols)
             invH = inv(H_prior)
 
@@ -857,9 +867,9 @@ class BayesianVAR:
         # Optional: plot coefficient draws
         if plot_coefficients:
             const_plot, var_plots = generate_coeff_plot(self)
-            display(const_plot)
-            for i, plot in enumerate(var_plots[:2]):
-                display(plot)
+            for fig, _ in var_plots[2:]:
+                plt.close(fig)                         # show the first two lags only
+            self.figures["coefficients"] = (const_plot, var_plots[:2])
             if len(var_plots) > 2:
                 print("Note: Only showing first 2 lags of coefficients.")
 
@@ -892,7 +902,7 @@ class BayesianVAR:
         self.ir_draws = []
         n_draws = len(self.beta_draws)
 
-        for d in tqdm(range(n_draws), desc="Computing IRFs"):
+        for d in tqdm(range(n_draws), desc="Computing IRFs", disable=not self.progress):
             B = self.reshape_beta(self.beta_draws[d], self.ncoeff_eq, N)
             Sigma = self.Sigma_draws[d]
 
@@ -928,16 +938,14 @@ class BayesianVAR:
         self.ir_draws = np.array(self.ir_draws)  # [draws, horizon, variable, shock]
 
         if plot_irfs:
-            ir_plots = generate_irf_plots(self, cred_interval)
-            for p in ir_plots:
-                display(p)
+            self.figures["irfs"] = generate_irf_plots(self, cred_interval)
 
         return self.ir_draws
     
 
     def compute_fevd(
         self,
-        plot_fevd: bool = True,
+        plot_fevd: bool = False,
         series_titles: Optional[List[str]] = None,
         shock_titles: Optional[List[str]] = None,
         title: Optional[str] = None
@@ -951,7 +959,7 @@ class BayesianVAR:
 
         Parameters
         ----------
-        plot_fevd : bool, default=True
+        plot_fevd : bool, default=False
             Whether to display the FEVD plots.
 
         series_titles : list of str, optional
@@ -978,7 +986,7 @@ class BayesianVAR:
         # Store FEVDs across draws: [draw, horizon, shock, variable]
         fevd_draws = np.zeros((n_draws, H, N, N))
 
-        for d in tqdm(range(n_draws), desc="Computing FEVD"):
+        for d in tqdm(range(n_draws), desc="Computing FEVD", disable=not self.progress):
             B = self.reshape_beta(self.beta_draws[d], self.ncoeff_eq, N)
             Sigma = self.Sigma_draws[d]
 
@@ -1023,8 +1031,7 @@ class BayesianVAR:
         self.fevd_draws = fevd_draws  # Save raw draws for later use
 
         if plot_fevd:
-            fevd_plot = generate_fevd_plot(self, series_titles, shock_titles, title)
-            display(fevd_plot)
+            self.figures["fevd"] = generate_fevd_plot(self, series_titles, shock_titles, title)
 
         return {
             "fevd": self.fevd,
@@ -1074,7 +1081,7 @@ class BayesianVAR:
     def forecast(
         self,
         fhor: int = 12,
-        plot_forecast: bool = True,
+        plot_forecast: bool = False,
         cred_interval: list = [0.68, 0.95],
         last_k: int = None,
         n_breaks: int = 10,
@@ -1183,7 +1190,7 @@ class BayesianVAR:
                 self, self.forecasts, cred_interval,
                 last_k, n_breaks, zero_line, forecast_type="Unconditional"
             )
-            display(forecast_plot)
+            self.figures["forecast"] = forecast_plot
 
         return {
             "forecast_draws": self.forecasts,
@@ -1283,7 +1290,7 @@ class BayesianVAR:
         return out
     
     def conditional_forecast(self, conditions: Union[np.ndarray, dict], fhor: int = 12,
-                             plot_forecast: bool = True,
+                             plot_forecast: bool = False,
                              cred_interval: list = [0.68, 0.95], last_k: int = None, n_breaks: int = 10,
                              zero_line: bool = False, future_exog: Optional[pd.DataFrame] = None,
                              shock_uncertainty: bool = True):
@@ -1388,7 +1395,7 @@ class BayesianVAR:
                 self, self.cond_forecasts, cred_interval, last_k,
                 n_breaks, zero_line, forecast_type="Conditional"
             )
-            display(forecast_plot)
+            self.figures["forecast"] = forecast_plot
 
         return self.cond_forecasts, shock_record
 
@@ -1548,8 +1555,8 @@ class BayesianVAR:
         (Minnesota-moment) prior at the given hyperparameters.
 
         Uses the Giannone-Lenza-Primiceri (2015) conjugate representation built
-        from ``mn_mean``, ``lamda1``, ``lamda3`` and ``lamda4`` (see
-        `select_hyperparameters` for why ``lamda2`` cannot enter). Under the
+        from ``mn_mean``, ``lambda1``, ``lambda3`` and ``lambda4`` (see
+        `select_hyperparameters` for why ``lambda2`` cannot enter). Under the
         Lenza-Primiceri COVID mode the estimated volatility scales are applied,
         so the value refers to the same reweighted likelihood used in
         estimation.
@@ -1594,7 +1601,7 @@ class BayesianVAR:
 
     def select_hyperparameters(
         self,
-        select=("lamda1", "lamda3"),
+        select=("lambda1", "lambda3"),
         bounds: Optional[dict] = None,
         update: bool = True,
         verbose: bool = True,
@@ -1611,21 +1618,21 @@ class BayesianVAR:
 
         Notes
         -----
-        ``lamda2`` (own-versus-cross asymmetry) breaks the Kronecker structure
+        ``lambda2`` (own-versus-cross asymmetry) breaks the Kronecker structure
         that makes the marginal likelihood analytic (Kadiyala & Karlsson,
         1997), so it cannot be selected here; it keeps its current value in
-        the sampling prior. Selectable: ``lamda1``, ``lamda3``, ``lamda4``,
+        the sampling prior. Selectable: ``lambda1``, ``lambda3``, ``lambda4``,
         and the dummy-prior tightnesses ``soc`` / ``dio`` (their marginal
         likelihood uses the GLP dummy correction; starting value 1 when the
         prior is currently off).
 
         Parameters
         ----------
-        select : iterable of str, default=("lamda1", "lamda3")
+        select : iterable of str, default=("lambda1", "lambda3")
             Hyperparameters to optimize.
         bounds : dict, optional
             ``{name: (low, high)}`` overrides of the default search bounds
-            ``lamda1 in [0.01, 5], lamda3 in [0.1, 5], lamda4 in [1, 1e6],
+            ``lambda1 in [0.01, 5], lambda3 in [0.1, 5], lambda4 in [1, 1e6],
             soc / dio in [0.1, 10]``.
         update : bool, default=True
             Write the optimum into `prior_params` and rebuild the prior (and
@@ -1644,18 +1651,23 @@ class BayesianVAR:
                 "prior (no closed-form marginal likelihood); ss_mean/ss_sd are "
                 "set by the user, never selected."
             )
-        allowed = {"lamda1", "lamda3", "lamda4", "soc", "dio"}
+        allowed = {"lambda1", "lambda3", "lambda4", "soc", "dio"}
         select = list(select)
+        for idx, name in enumerate(select):
+            if name in _DEPRECATED_KEYS:
+                warnings.warn(f"Hyperparameter name {name!r} is deprecated; use "
+                              f"{_DEPRECATED_KEYS[name]!r}.", DeprecationWarning, stacklevel=2)
+                select[idx] = _DEPRECATED_KEYS[name]
         bad = [s for s in select if s not in allowed]
         if bad:
             raise ValueError(
                 f"Cannot select {bad} by marginal likelihood: only {sorted(allowed)} "
-                "enter the conjugate (Kronecker) prior. In particular lamda2 "
+                "enter the conjugate (Kronecker) prior. In particular lambda2 "
                 "requires asymmetric own/cross shrinkage, which has no analytic "
                 "marginal likelihood."
             )
-        default_bounds = {"lamda1": (0.01, 5.0), "lamda3": (0.1, 5.0),
-                          "lamda4": (1.0, 1e6),
+        default_bounds = {"lambda1": (0.01, 5.0), "lambda3": (0.1, 5.0),
+                          "lambda4": (1.0, 1e6),
                           "soc": (0.1, 10.0), "dio": (0.1, 10.0)}
         if bounds:
             default_bounds.update(bounds)
