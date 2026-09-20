@@ -9,7 +9,7 @@ from IPython.display import display
 from numpy.linalg import inv, eigvals
 from scipy.optimize import minimize
 from scipy.stats import invwishart
-from .data_handling import prepare_data, estimate_ols
+from .data_handling import prepare_data, estimate_ols, historical_decomposition
 from .priors import (
     _DEPRECATED_KEYS,
     normalize_prior_params,
@@ -24,6 +24,7 @@ from .plots import (
     generate_irf_plots,
     generate_forecast_plots,
     generate_fevd_plot,
+    generate_hd_plot,
     generate_exog_coeff_plot,
 )
 from .summary import generate_summary
@@ -1077,6 +1078,85 @@ class BayesianVAR:
         if not blocks:
             return np.zeros((fhor, 0))
         return np.hstack(blocks)
+
+    def compute_hd(
+        self,
+        plot_hd: bool = False,
+        series_titles: list = None,
+        shock_titles: list = None,
+        title: str = None,
+        store_draws: bool = False,
+    ) -> dict:
+        """
+        Historical decomposition, averaged over the posterior draws.
+
+        Every draw is decomposed with its own coefficients and its own
+        recursive (Cholesky) impact matrix, and the reported decomposition is
+        the posterior mean. The decomposition is linear within each draw, so
+        the identity ``baseline + shock.sum(axis=1) == yy`` still holds exactly
+        after averaging.
+
+        Parameters
+        ----------
+        plot_hd : bool, default=False
+            Build the stacked-bar figure (stored in ``figures["hd"]``).
+        series_titles, shock_titles, title : list, list, str
+            Labels for the figure.
+        store_draws : bool, default=False
+            Keep the decomposition of every draw in ``hd_draws`` with shape
+            (n_draws, T, n_shocks, n_endo). It can be large.
+
+        Returns
+        -------
+        dict
+            ``"shock"`` (T, n_shocks, n_endo), ``"baseline"`` (T, n_endo),
+            ``"endo"`` and ``"dates"``.
+        """
+        if len(self.beta_draws) == 0:
+            raise RuntimeError("Call sample_posterior() before compute_hd().")
+        if getattr(self, "ss_active", False):
+            raise NotImplementedError(
+                "Historical decomposition is not available under the steady-state "
+                "prior (Villani, 2009): the sampler works on demeaned data.")
+
+        N, P = self.n_endo, self.lags
+        T = self.yy.shape[0]
+        n_draws = len(self.beta_draws)
+        shock_sum = np.zeros((T, N, N))
+        baseline_sum = np.zeros((T, N))
+        draws = np.zeros((n_draws, T, N, N)) if store_draws else None
+        kept = 0
+
+        for d in tqdm(range(n_draws), desc="Computing HD", disable=not self.progress):
+            B = self.reshape_beta(self.beta_draws[d], self.ncoeff_eq, N)
+            try:
+                shock, baseline = historical_decomposition(
+                    B, self.Sigma_draws[d], self.yy, self.XX, N, P)
+            except np.linalg.LinAlgError:
+                continue
+            shock_sum += shock
+            baseline_sum += baseline
+            if store_draws:
+                draws[kept] = shock
+            kept += 1
+
+        if kept == 0:
+            raise RuntimeError("No usable posterior draws for the historical decomposition.")
+        shock_mean = shock_sum / kept
+        baseline_mean = baseline_sum / kept
+        self.HD = {
+            "shock": shock_mean,
+            "baseline": baseline_mean,
+            "endo": baseline_mean + shock_mean.sum(axis=1),
+            "dates": pd.DatetimeIndex(pd.to_datetime(self.yy_dates)),
+        }
+        if store_draws:
+            self.hd_draws = draws[:kept]
+
+        if plot_hd:
+            self.figures["hd"] = generate_hd_plot(self, series_titles, shock_titles, title)
+
+        return self.HD
 
     def forecast(
         self,

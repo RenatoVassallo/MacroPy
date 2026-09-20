@@ -7,6 +7,7 @@ __all__ = [
     "prepare_panel_unit_data",
     "prepare_panel_data",
     "coefficients_by_lag",
+    "historical_decomposition",
 ]
 
 
@@ -379,3 +380,74 @@ def coefficients_by_lag(B, n, p, constant=True):
     phis = [B[lag * n:(lag + 1) * n, :].T for lag in range(p)]
     c = B[n * p, :].copy() if constant else None
     return phis, c
+
+
+def historical_decomposition(B, Sigma, yy, XX, n, p, S=None):
+    """
+    Historical decomposition of a reduced-form VAR, identified recursively.
+
+    Each observation is written as the part explained by the initial conditions
+    and the deterministic terms plus the accumulated effect of every structural
+    shock, using the companion recursion
+    ``state_t = F state_{t-1} + [S eps_t; 0]``.
+
+    Parameters
+    ----------
+    B : array (k x n)
+        Coefficients in MacroPy's layout: ``[lag-1 vars, ..., lag-p vars,
+        constant?, trend?, exog...]`` down the rows, one column per equation.
+    Sigma : array (n x n)
+        Covariance of the reduced-form innovations.
+    yy, XX : arrays (T x n) and (T x k)
+        Estimation sample as returned by `prepare_data`.
+    n, p : int
+        Number of variables and lags.
+    S : array (n x n), optional
+        Impact matrix. Defaults to the Cholesky factor of `Sigma`, that is, a
+        recursive identification in the order of the columns of `yy`.
+
+    Returns
+    -------
+    shock : array (T, n, n)
+        ``shock[t, j, i]``: contribution of structural shock ``j`` to variable
+        ``i`` at time ``t``.
+    baseline : array (T, n)
+        Initial conditions plus deterministic and exogenous terms.
+
+    Notes
+    -----
+    The decomposition is exact: ``baseline + shock.sum(axis=1)`` reproduces
+    ``yy`` up to floating point error.
+    """
+    B = np.asarray(B, dtype=float)
+    yy = np.asarray(yy, dtype=float)
+    XX = np.asarray(XX, dtype=float)
+    S = np.linalg.cholesky(Sigma) if S is None else np.asarray(S, dtype=float)
+
+    T, lag_block = yy.shape[0], n * p
+    eps = np.linalg.solve(S, (yy - XX @ B).T)          # structural shocks (n x T)
+
+    F = np.zeros((lag_block, lag_block))               # companion matrix
+    F[:n, :] = B[:lag_block, :].T
+    if p > 1:
+        F[n:, :n * (p - 1)] = np.eye(n * (p - 1))
+    impact = np.zeros((lag_block, n))                  # column j: shock j on impact
+    impact[:n, :] = S
+
+    # Deterministic and exogenous part, read from the regressors themselves so
+    # that the trend convention and any exogenous block are respected.
+    deterministic = (XX[:, lag_block:] @ B[lag_block:, :] if XX.shape[1] > lag_block
+                     else np.zeros((T, n)))
+
+    shock = np.zeros((T, n, n))
+    baseline = np.zeros((T, n))
+    state = np.zeros((lag_block, n))                   # one column per shock
+    base_state = XX[0, :lag_block].copy()              # initial conditions
+    lifted = np.zeros(lag_block)
+    for t in range(T):
+        state = F @ state + impact * eps[:, t]
+        shock[t] = state[:n, :].T
+        lifted[:n] = deterministic[t]
+        base_state = F @ base_state + lifted
+        baseline[t] = base_state[:n]
+    return shock, baseline

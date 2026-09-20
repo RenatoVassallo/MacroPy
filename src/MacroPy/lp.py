@@ -331,6 +331,81 @@ class SmoothLocalProjections:
 
         return conf
 
+    def cross_validate_lambda(self, lambdas: list, plot: bool = False):
+        """
+        Generalized Cross-Validation (GCV) to choose optimal lambda for smoothing.
+
+        Parameters:
+        - lambdas: List of lambda values to test
+
+        Stores:
+        - self.cv_rss: Array of RSS for each lambda
+        - self.cv_lambda_opt: Lambda minimizing the RSS
+        """
+        if not hasattr(self, "result"):
+            raise ValueError("Run `.estimate()` once with a non-zero penalty to initialize B and P.")
+
+        Y = self.result["Y"]
+        X = self.result["X"]
+        P = self.result["P"]
+
+        X = X.toarray() if sparse.issparse(X) else np.asarray(X)
+        P = np.asarray(P, dtype=np.float64)
+
+        rss_list = []
+        for lam in lambdas:
+            XtX = X.T @ X + lam * P
+            XtY = X.T
+            H = X @ solve(XtX, XtY)
+            h_diag = np.diagonal(H)
+            residuals = (Y - H @ Y) / (1 - h_diag)
+            rss = np.sum(residuals ** 2)
+            rss_list.append(rss)
+
+        self.cv_rss = np.array(rss_list)
+        self.cv_lambdas = np.array(lambdas)
+        self.cv_lambda_opt = lambdas[np.argmin(rss_list)]
+        
+        if plot:                                   # RSS against lambda
+            with macropy_style():
+                fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+                ax.plot(self.cv_lambdas, self.cv_rss, "-o", color=PALETTE["navy"])
+                ax.set_title("Cross-validated RSS by lambda")
+                ax.set_xlabel("Lambda")
+                ax.set_ylabel("RSS")
+            self.cv_figure = (fig, ax)
+
+        return self.cv_lambda_opt
+    
+
+    @styled
+    def plot_irf_with_confidence(self, title="Impulse Response with Confidence Intervals", alpha=0.1):
+        """
+        Plot the impulse response function with confidence intervals.
+        
+        Parameters:
+        - title: Title of the plot
+        - alpha: Significance level (default: 0.05 for 95% CI)
+        """
+        if self.result is None or "confidence_intervals" not in self.result:
+            raise ValueError("Run `.estimate()` and `.compute_confidence_intervals()` first.")
+
+        IR = self.result["IR"]
+        CI = self.result["confidence_intervals"]
+
+        H = list(range(self.h_max + 1))
+
+        fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+        ax.plot(H, IR, label="IRF", color=PALETTE["median"], linewidth=2)
+        ax.fill_between(H, CI[:, 0], CI[:, 1], color=PALETTE["band"], alpha=0.25,
+                        label=f"{int((1-alpha)*100)}% CI")
+        ax.axhline(0, color=PALETTE["gray"], linestyle="--", linewidth=1)
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel("Response")
+        ax.set_title(title)
+        ax.legend()
+        return fig, ax
+
     @staticmethod
     @styled
     def plot_irfs(results_list, labels=None, title="Impulse Response Comparison"):
@@ -1093,77 +1168,3 @@ class PanelLocalProjections:
         ax.legend(frameon=False)
         return ax
         
-    def cross_validate_lambda(self, lambdas: list, plot: bool = False):
-        """
-        Generalized Cross-Validation (GCV) to choose optimal lambda for smoothing.
-
-        Parameters:
-        - lambdas: List of lambda values to test
-
-        Stores:
-        - self.cv_rss: Array of RSS for each lambda
-        - self.cv_lambda_opt: Lambda minimizing the RSS
-        """
-        if not hasattr(self, "result"):
-            raise ValueError("Run `.estimate()` once with a non-zero penalty to initialize B and P.")
-
-        Y = self.result["Y"]
-        X = self.result["X"]
-        P = self.result["P"]
-
-        X = X.toarray() if sparse.issparse(X) else np.asarray(X)
-        P = np.asarray(P, dtype=np.float64)
-
-        rss_list = []
-        for lam in lambdas:
-            XtX = X.T @ X + lam * P
-            XtY = X.T
-            H = X @ solve(XtX, XtY)
-            h_diag = np.diagonal(H)
-            residuals = (Y - H @ Y) / (1 - h_diag)
-            rss = np.sum(residuals ** 2)
-            rss_list.append(rss)
-
-        self.cv_rss = np.array(rss_list)
-        self.cv_lambdas = np.array(lambdas)
-        self.cv_lambda_opt = lambdas[np.argmin(rss_list)]
-        
-        if plot:                                   # RSS against lambda
-            with macropy_style():
-                fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
-                ax.plot(self.cv_lambdas, self.cv_rss, "-o", color=PALETTE["navy"])
-                ax.set_title("Cross-validated RSS by lambda")
-                ax.set_xlabel("Lambda")
-                ax.set_ylabel("RSS")
-            self.cv_figure = (fig, ax)
-
-        return self.cv_lambda_opt
-    
-
-    @styled
-    def plot_irf_with_confidence(self, title="Impulse Response with Confidence Intervals", alpha=0.1):
-        """
-        Plot the impulse response function with confidence intervals.
-        
-        Parameters:
-        - title: Title of the plot
-        - alpha: Significance level (default: 0.05 for 95% CI)
-        """
-        if self.result is None or "confidence_intervals" not in self.result:
-            raise ValueError("Run `.estimate()` and `.compute_confidence_intervals()` first.")
-
-        IR = self.result["IR"]
-        CI = self.result["confidence_intervals"]
-
-        H = list(range(self.h_max + 1))
-
-        fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
-        ax.plot(H, IR, label="IRF", color=PALETTE["median"], linewidth=2)
-        ax.fill_between(H, CI[:, 0], CI[:, 1], color=PALETTE["band"], alpha=0.25,
-                        label=f"{int((1-alpha)*100)}% CI")
-        ax.axhline(0, color=PALETTE["gray"], linestyle="--", linewidth=1)
-        ax.set_xlabel("Horizon")
-        ax.set_ylabel("Response")
-        ax.set_title(title)
-        ax.legend()
-        return fig, ax

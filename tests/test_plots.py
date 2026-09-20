@@ -104,3 +104,24 @@ def test_style_block_keeps_backend_state():
         assert plt.rcParams["interactive"] is True
     finally:
         plt.rcParams["interactive"] = before
+
+
+def test_smooth_local_projections_has_its_methods():
+    # cross_validate_lambda and plot_irf_with_confidence use self.result["X"/"Y"/"P"]
+    # and self.h_max: they belong to SmoothLocalProjections, not to the panel class.
+    from MacroPy import SmoothLocalProjections
+    rng = np.random.default_rng(5)
+    shock = pd.Series(rng.standard_normal(200))
+    response = pd.Series(np.r_[0.0, 0.5 * shock.to_numpy()[:-1]]
+                         + 0.3 * rng.standard_normal(200))
+    model = SmoothLocalProjections(response=response, shock=shock,
+                                   controls=response.to_frame("y"), lags=2,
+                                   horizons=list(range(1, 9)))
+    model.estimate(projection_type="smooth", penalty_order=2, penalty_lambda=0.01)
+    best = model.cross_validate_lambda([10.0, 50.0, 100.0], plot=True)
+    assert best in (10.0, 50.0, 100.0)
+    assert isinstance(model.cv_figure[0], Figure)
+    model.estimate(projection_type="smooth", penalty_lambda=best)
+    model.compute_confidence_intervals(alpha=0.1)
+    fig, ax = model.plot_irf_with_confidence()
+    assert isinstance(fig, Figure)

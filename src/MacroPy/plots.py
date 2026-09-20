@@ -367,7 +367,8 @@ def generate_hd_plot(self, series_titles=None, shock_titles=None, title=None,
     """
     hd = np.asarray(self.HD["shock"])
     T, n_shocks, n_vars = hd.shape
-    dates = pd.DatetimeIndex(pd.to_datetime(self.dates))[-T:]   # sample after the lags
+    dates = self.HD.get("dates")
+    dates = pd.DatetimeIndex(pd.to_datetime(self.dates if dates is None else dates))[-T:]
     var_labels = list(series_titles) if series_titles else [str(v) for v in self.names]
     shock_labels = list(shock_titles) if shock_titles else [f"Shock {s + 1}" for s in range(n_shocks)]
     colors = _stack_colors(color_palette, n_shocks)

@@ -5,7 +5,7 @@ from IPython.display import display
 from numpy.linalg import inv, eigvals
 from typing import Optional
 from scipy.stats import invwishart
-from .data_handling import prepare_data, estimate_ols
+from .data_handling import prepare_data, estimate_ols, historical_decomposition
 from .plots import generate_series_plot, generate_irf_plots, generate_fevd_plot, generate_hd_plot
 from .summary import generate_summary
 
@@ -321,95 +321,40 @@ class ClassicVAR:
     def compute_hd(self, plot_hd: bool = False, series_titles: list = None,
                     shock_titles: list = None, title: str = None):
         """
-        Compute the Historical Decomposition (HD) for the VAR model.
+        Historical decomposition with a recursive (Cholesky) identification.
+
+        Parameters
+        ----------
+        plot_hd : bool, default=False
+            Build the stacked-bar figure (stored in ``figures["hd"]``).
+        series_titles, shock_titles, title : list, list, str
+            Labels for the figure.
+
+        Returns
+        -------
+        dict
+            ``"shock"`` (T, n_shocks, n_endo): contribution of each structural
+            shock; ``"baseline"`` (T, n_endo): initial conditions plus the
+            deterministic terms; ``"endo"``: their sum; ``"dates"``: the dates
+            of those T observations. The identity
+            ``baseline + shock.sum(axis=1) == yy`` holds exactly.
         """
-        N, P = self.n_endo, self.lags
-        T = self.yy.shape[0]
-        Sigma = self.Sigma_ols
-        B = self.reshape_beta(self.b_ols, self.ncoeff_eq, N)
-        Bcomp = self.build_companion_matrix(B, N, P, self.n_exo)
-        X = self.XX
-        const_cols = int(self.constant) + int(self.timetrend)
-
-        # Get residuals and structural impact matrix
-        resid = self.yy - self.XX @ B
-        try:
-            S = np.linalg.cholesky(Sigma)
-        except np.linalg.LinAlgError:
-            raise ValueError("Sigma_ols is not positive definite")
-        
-        eps = np.linalg.solve(S, resid.T)  # Structural shocks
-
-        nlagX = N * P
-        B_big = np.zeros((nlagX, N))
-        B_big[:N, :] = S
-
-        Icomp = np.hstack((np.eye(N), np.zeros((N, nlagX - N))))  # (N, N*P)
-
-        # === SHOCK COMPONENTS ===
-        HDshock_big = np.zeros((nlagX, T + 1, N))
-        HDshock = np.zeros((N, T + 1, N))
-
-        for j in range(N):
-            eps_big = np.zeros((N, T + 1))
-            eps_big[j, 1:] = eps[j, :]
-            for t in range(1, T + 1):
-                HDshock_big[:, t, j] = B_big @ eps_big[:, t] + Bcomp @ HDshock_big[:, t - 1, j]
-                HDshock[:, t, j] = Icomp @ HDshock_big[:, t, j]
-
-        # === INITIAL CONDITION ===
-        HDinit_big = np.zeros((nlagX, T + 1))
-        HDinit = np.zeros((N, T + 1))
-        HDinit_big[:, 0] = X[0, :-const_cols]  # exclude constant/trend
-        HDinit[:, 0] = Icomp @ HDinit_big[:, 0]
-        for t in range(1, T + 1):
-            HDinit_big[:, t] = Bcomp @ HDinit_big[:, t - 1]
-            HDinit[:, t] = Icomp @ HDinit_big[:, t]
-
-        # === CONSTANT TERM ===
-        HDconst_big = np.zeros((nlagX, T + 1))
-        HDconst = np.zeros((N, T + 1))
-        if self.constant:
-            C = np.zeros((nlagX,))
-            C[:N] = B[-1, :]
-            for t in range(1, T + 1):
-                HDconst_big[:, t] = C + Bcomp @ HDconst_big[:, t - 1]
-                HDconst[:, t] = Icomp @ HDconst_big[:, t]
-
-        # === TREND TERM ===
-        HDtrend_big = np.zeros((nlagX, T + 1))
-        HDtrend = np.zeros((N, T + 1))
-        if self.timetrend:
-            T_vec = np.zeros((nlagX,))
-            T_vec[:N] = B[-2 if self.constant else -1, :]
-            for t in range(1, T + 1):
-                HDtrend_big[:, t] = T_vec * (t - 1) + Bcomp @ HDtrend_big[:, t - 1]
-                HDtrend[:, t] = Icomp @ HDtrend_big[:, t]
-
-        # === Final HD Aggregation ===
-        HDendo = HDinit + HDconst + HDtrend + np.sum(HDshock, axis=2)
-
-        # === Save outputs ===
-        HDshock_out = np.full((T + P, N, N), np.nan)
-        for j in range(N):  # shock index
-            for i in range(N):  # variable index
-                HDshock_out[P:, i, j] = HDshock[i, 1:, j]
-
+        B = self.reshape_beta(self.b_ols, self.ncoeff_eq, self.n_endo)
+        shock, baseline = historical_decomposition(
+            B, self.Sigma_ols, self.yy, self.XX, self.n_endo, self.lags)
         self.HD = {
-            'shock': HDshock_out,  # shape: [T+P, variable, shock]
-            'init': np.vstack([np.full((P - 1, N), np.nan), HDinit[:, :].T]),
-            'const': np.vstack([np.full((P, N), np.nan), HDconst[:, 1:].T]),
-            'trend': np.vstack([np.full((P, N), np.nan), HDtrend[:, 1:].T]),
-            'endo': np.vstack([np.full((P, N), np.nan), HDendo[:, 1:].T])
+            "shock": shock,
+            "baseline": baseline,
+            "endo": baseline + shock.sum(axis=1),
+            "dates": pd.DatetimeIndex(pd.to_datetime(self.dates))[self.lags:],
         }
-        
+
         if plot_hd:
-            hd_plot = generate_hd_plot(self, series_titles, shock_titles, title)
-            self.figures["hd"] = hd_plot
+            self.figures["hd"] = generate_hd_plot(self, series_titles, shock_titles, title)
 
         return self.HD
-                
-    
+
+
     def forecast(self, forecast_data):
         """Compute forecasts."""
         for d in range(len(self.beta_draws)):

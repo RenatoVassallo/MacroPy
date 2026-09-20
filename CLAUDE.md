@@ -61,6 +61,9 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   `display` or `set_bse_style()`; figures made by methods go to
   `model.figures`. Colours come from the public `style.PALETTE`.
 - Every module defines `__all__`; `__init__.py` imports names explicitly.
+- `compute_hd` exists in `ClassicVAR` and `BayesianVAR` (posterior mean over
+  draws) and returns `{"shock" (T, shocks, endo), "baseline", "endo", "dates"}`;
+  the identity `baseline + shock.sum(axis=1) == yy` is part of the test suite.
 - `post_draws` = total draws including burn-in; `burnin` = fraction discarded.
 - Regressor layout from `prepare_data`: `[lag-1 vars, ..., lag-P vars,
   constant?, trend?, exog...]` — lags first, deterministic terms last.

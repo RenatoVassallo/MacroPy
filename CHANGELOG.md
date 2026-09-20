@@ -37,6 +37,10 @@ used to arrive only through plotnine.
   `MacroPy/__init__.py` imports names explicitly instead of nine `import *`.
   Names that leaked through the star imports (`np`, `pd`, plotnine objects)
   are no longer attributes of `MacroPy`.
+- `cross_validate_lambda` and `plot_irf_with_confidence` are back in
+  `SmoothLocalProjections`. They had ended up inside `PanelLocalProjections`,
+  which has neither `result["X"/"Y"/"P"]` nor `h_max`, so they were unusable
+  from either class and `tutorial_localprojections` failed on them.
 - `SmoothLocalProjections.plot_irfs` and `plot_irf_with_confidence` return
   `(fig, ax)` instead of calling `plt.show()`, and `cross_validate_lambda` only
   plots with `plot=True` (the figure goes to `cv_figure`).
@@ -84,7 +88,21 @@ used to arrive only through plotnine.
   isolates the user from the layout (MacroPy puts the constant after the lags).
 - `py.typed` marker; `get_fred_data` says what to set when the API key is
   missing.
-- `MacroPy.style`: public, overridable `PALETTE` (with an Okabe-Ito,
+- **Historical decomposition for `BayesianVAR`** (`compute_hd`), computed draw
+  by draw with each draw's own coefficients and Cholesky impact matrix and
+  reported as the posterior mean; `store_draws=True` keeps every draw. It is
+  not available under the steady-state prior, which works on demeaned data.
+- `data_handling.historical_decomposition(B, Sigma, yy, XX, n, p, S=None)`:
+  the shared computation, with the deterministic and exogenous block read from
+  the regressors so any trend convention or exogenous variable is respected.
+- `HD` now has the same shape in both classes: `"shock"` (T, n_shocks, n_endo),
+  `"baseline"`, `"endo"` and `"dates"`, and `baseline + shock.sum(axis=1)`
+  reproduces the sample exactly (checked in `tests/test_historical_decomposition.py`).
+  `ClassicVAR.HD` used to store `(T + p, variable, shock)` with `init`, `const`
+  and `trend` keys, and the plot read that array as `(T, shock, variable)`, so
+  panels and colours were transposed: the historical decomposition figure was
+  mislabelled.
+- - `MacroPy.style`: public, overridable `PALETTE` (with an Okabe-Ito,
   colour-blind-safe set for stacked FEVD and HD plots), `macropy_style()`,
   `macropy_rcparams()` and the `styled` decorator.
 - `tests/test_plots.py`: figures are returned and stored, nothing is drawn by
