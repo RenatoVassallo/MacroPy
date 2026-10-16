@@ -96,5 +96,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.0.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.1.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)
