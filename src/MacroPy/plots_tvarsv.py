@@ -10,8 +10,8 @@ regimes, any dataset), with sensible defaults and fully customizable labels:
 * :func:`plot_irfs`       - generalized impulse responses, regime 1 vs. regime 2,
   for the uncertainty shock *or* any recursive (Cholesky) structural shock.
 
-Styling follows :mod:`MacroPy.plots_kalman` (BSE palette, matplotlib). Every
-function accepts a ``savepath`` to write a tight-bbox vector file for LaTeX.
+Every figure uses the MacroPy style (:mod:`MacroPy.style`) and every function
+accepts a ``savepath`` to write a tight-bbox vector file for LaTeX.
 """
 
 from __future__ import annotations
@@ -21,10 +21,8 @@ from typing import List, Optional, Tuple, Union
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .style import styled
-from .plots_kalman import (
-    set_bse_style, _save, BSE_TEAL, BSE_ORANGE, BSE_NAVY, BSE_GRAY,
-)
+from ._plotting import _save
+from .style import PALETTE, styled
 
 
 @styled
@@ -71,10 +69,10 @@ def plot_regimes(model, shade_regime: int = 2, prob_threshold: float = 0.5,
 
     fig, ax = plt.subplots(figsize=(11, 3.8), constrained_layout=True)
     ylo, yhi = float(series.min()) - 0.3, float(series.max()) + 0.3
-    ax.fill_between(prob.index, ylo, yhi, where=shaded, color=BSE_GRAY, alpha=0.22,
+    ax.fill_between(prob.index, ylo, yhi, where=shaded, color=PALETTE["gray"], alpha=0.22,
                     step="mid", label=regime_label)
-    ax.plot(prob.index, series.values, color=BSE_TEAL, lw=1.2, label=name)
-    ax.axhline(zstar, color=BSE_ORANGE, lw=1.6, ls="--",
+    ax.plot(prob.index, series.values, color=PALETTE["ink"], lw=1.2, label=name)
+    ax.axhline(zstar, color=PALETTE["accent"], lw=1.6, ls="--",
                label=f"Threshold $Z^*$ = {zstar:.2f}")
     ax.set_ylim(ylo, yhi)
     ax.set_ylabel(name)
@@ -83,7 +81,7 @@ def plot_regimes(model, shade_regime: int = 2, prob_threshold: float = 0.5,
 
     if show_prob:
         ax2 = ax.twinx()
-        ax2.fill_between(prob.index, 0, prob.values, color=BSE_NAVY, alpha=0.12)
+        ax2.fill_between(prob.index, 0, prob.values, color=PALETTE["navy"], alpha=0.12)
         ax2.set_ylim(0, 1)
         ax2.set_ylabel(prob_label)
         ax2.grid(False)
@@ -105,9 +103,9 @@ def plot_volatility(model, cred: float = 0.68, log_scale: bool = False,
     model._require_draws()
     vp = model.volatility_path(cred=cred)
     fig, ax = plt.subplots(figsize=(11, 3.6), constrained_layout=True)
-    ax.fill_between(vp.index, vp["lower"], vp["upper"], color=BSE_ORANGE,
+    ax.fill_between(vp.index, vp["lower"], vp["upper"], color=PALETTE["accent"],
                     alpha=0.20, label=f"{int(cred * 100)}% band")
-    ax.plot(vp.index, vp["median"], color=BSE_ORANGE, lw=1.7, label="median")
+    ax.plot(vp.index, vp["median"], color=PALETTE["accent"], lw=1.7, label="median")
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     if log_scale:
@@ -155,7 +153,7 @@ def plot_irfs(model, shock: Union[str, int] = "uncertainty",
 
     # shock selection: uncertainty vs. recursive (level) shock to a variable
     if isinstance(shock, str) and shock == "uncertainty":
-        key, shock_title = "uncertainty", "uncertainty"
+        shock_title = "uncertainty"
 
         def fetch(reg, v):
             return model.irf[reg]["uncertainty"][:, :, v]
@@ -182,11 +180,11 @@ def plot_irfs(model, shock: Union[str, int] = "uncertainty",
                              constrained_layout=True, squeeze=False)
     axes = axes.ravel()
 
-    style = [("regime1", BSE_NAVY, regime_labels[0]),
-             ("regime2", BSE_ORANGE, regime_labels[1])]
+    style = [("regime1", PALETTE["navy"], regime_labels[0]),
+             ("regime2", PALETTE["accent"], regime_labels[1])]
     for p, v in enumerate(resp_idx):
         ax = axes[p]
-        ax.axhline(0, color=BSE_GRAY, lw=0.7)
+        ax.axhline(0, color=PALETTE["gray"], lw=0.7)
         for reg, color, lab in style:
             if model.irf.get(reg) is None:
                 continue
@@ -202,7 +200,7 @@ def plot_irfs(model, shock: Union[str, int] = "uncertainty",
     for k in range(nplot, len(axes)):
         axes[k].axis("off")
     fig.suptitle(title or f"Response to a {shock_title} shock",
-                 color=BSE_TEAL, weight="bold")
+                 color=PALETTE["ink"], weight="bold")
     _save(fig, savepath)
     return fig, axes
 

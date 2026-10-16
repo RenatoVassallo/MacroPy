@@ -613,7 +613,6 @@ def _numerical_hessian(func: Callable[[np.ndarray], float], x: np.ndarray,
     """Symmetric finite-difference Hessian."""
     n = len(x)
     H = np.zeros((n, n))
-    fx = func(x)
     for i in range(n):
         for j in range(i, n):
             x1 = x.copy(); x1[i] += eps; x1[j] += eps

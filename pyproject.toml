@@ -79,4 +79,5 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Bundled X-13ARIMA-SEATS binaries (Census source build), one per platform;
 # discovered at runtime via MacroPy.x13.x13_path().
-MacroPy = ["bin/*/x13as", "bin/*/x13as.exe", "py.typed"]
+# The MacroPy style sheet, for plt.style.use("MacroPy.macropy").
+MacroPy = ["bin/*/x13as", "bin/*/x13as.exe", "py.typed", "*.mplstyle"]

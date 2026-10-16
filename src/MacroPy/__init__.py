@@ -25,13 +25,18 @@ from .priors import (
     DiffusePanelExogenousPrior, normalize_prior_params, ar1_residual_std,
     nw_conjugate_moments, nw_log_marginal_likelihood, PRIOR_DEFAULTS, PRIOR_KEYS,
 )
-from .summary import generate_summary, generate_uc_summary, generate_tvarsv_summary
+from .summary import (
+    generate_summary, generate_uc_summary, generate_tvarsv_summary, generate_tvpvar_summary,
+)
 from .state_space import (
     StateSpaceModel, LocalLinearTrend, ClarkModel, WatsonUC, MLEEstimator, MLEResult,
     BayesianStateSpace, BayesianResult, clark_update_step, build_clark_simple,
     build_watson_uc, watson_gibbs_step, decomposition_to_frame,
 )
-from .style import PALETTE, macropy_rcparams, macropy_style, set_bse_style, styled
+from .style import (
+    PALETTE, CONTEXTS, set_style, reset_style, style_context, styled, macropy_rcparams,
+    macropy_style, color_palette, colormap, set_bse_style,
+)
 from .plots import (
     generate_series_plot, generate_coeff_plot, generate_exog_coeff_plot,
     generate_panel_coeff_plots, generate_irf_plots, generate_fevd_plot,
@@ -39,11 +44,15 @@ from .plots import (
 )
 from .plots_kalman import (
     plot_series_with_trend, plot_decomposition, plot_with_bands, plot_kalman_step,
-    plot_posterior_traces, BSE_TEAL, BSE_TEAL_SOFT, BSE_ORANGE, BSE_NAVY, BSE_GRAY,
-    BSE_LIGHT,
+    plot_posterior_traces,
 )
 from .tvarsv import ThresholdVARSV
 from .plots_tvarsv import plot_regimes, plot_volatility, plot_irfs
+from .tvpvar import TimeVaryingVAR, compare_tvpvar, TVP_PRIOR_DEFAULTS
+from .plots_tvpvar import (
+    plot_tvp_volatility, plot_tvp_coefficients, plot_tvp_irfs, plot_irf_surface, plot_irf_over_time,
+    plot_fevd_over_time, plot_tvp_fan_chart,
+)
 from .uc import (
     hp_filter, UCTrendCycle, compare_uc, make_priors, covid_lambda_path,
     integrated_loglik, kalman_loglik,
@@ -62,22 +71,40 @@ __all__ = [
     "DiffusePanelExogenousPrior", "normalize_prior_params", "ar1_residual_std",
     "nw_conjugate_moments", "nw_log_marginal_likelihood", "PRIOR_DEFAULTS", "PRIOR_KEYS",
     "generate_summary", "generate_uc_summary", "generate_tvarsv_summary",
+    "generate_tvpvar_summary",
     "StateSpaceModel", "LocalLinearTrend", "ClarkModel", "WatsonUC", "MLEEstimator",
     "MLEResult", "BayesianStateSpace", "BayesianResult", "clark_update_step",
     "build_clark_simple", "build_watson_uc", "watson_gibbs_step", "decomposition_to_frame",
-    "PALETTE", "macropy_rcparams", "macropy_style", "set_bse_style", "styled", "use_own_style",
+    "PALETTE", "CONTEXTS", "set_style", "reset_style", "style_context", "styled",
+    "macropy_rcparams", "macropy_style", "color_palette", "colormap", "use_own_style",
     "generate_series_plot", "generate_coeff_plot", "generate_exog_coeff_plot",
     "generate_panel_coeff_plots", "generate_irf_plots", "generate_fevd_plot",
     "generate_hd_plot", "generate_forecast_plots",
     "plot_series_with_trend", "plot_decomposition", "plot_with_bands", "plot_kalman_step",
-    "plot_posterior_traces", "BSE_TEAL", "BSE_TEAL_SOFT", "BSE_ORANGE", "BSE_NAVY",
-    "BSE_GRAY", "BSE_LIGHT",
+    "plot_posterior_traces",
     "ThresholdVARSV", "plot_regimes", "plot_volatility", "plot_irfs",
+    "TimeVaryingVAR", "compare_tvpvar", "TVP_PRIOR_DEFAULTS", "plot_tvp_volatility",
+    "plot_tvp_coefficients",
+    "plot_tvp_irfs", "plot_irf_surface", "plot_irf_over_time", "plot_fevd_over_time",
+    "plot_tvp_fan_chart",
     "hp_filter", "UCTrendCycle", "compare_uc", "make_priors", "covid_lambda_path",
     "integrated_loglik", "kalman_loglik",
     "plot_uc_decomposition", "plot_covid_scales", "plot_gap_comparison", "plot_fan_chart",
     "x13_path", "seasonal_adjust", "SeasonalResult",
 ]
+
+
+def __getattr__(name):
+    """Deprecated names (PEP 562): the former BSE_* colour constants."""
+    from .plots_kalman import _DEPRECATED_COLORS
+    if name in _DEPRECATED_COLORS:
+        import warnings
+        key = _DEPRECATED_COLORS[name]
+        warnings.warn(f"{name} is deprecated; use MacroPy.PALETTE[{key!r}].",
+                      DeprecationWarning, stacklevel=2)
+        return PALETTE[key]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 try:
     # Data-download helpers depend on third-party APIs that the estimators do not need.

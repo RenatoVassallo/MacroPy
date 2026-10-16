@@ -156,6 +156,9 @@ class SmoothLocalProjections:
         return _b_spline_basis(horizon_grid, lower_bound, upper_bound, num_knots, degree)
 
     def estimate(self, projection_type='smooth', penalty_order=2, penalty_lambda=100):
+        if projection_type not in ("smooth", "reg"):
+            raise ValueError("projection_type must be 'smooth' or 'reg'; "
+                             f"got {projection_type!r}.")
         T = len(self.y)
         HR = self.h_max + 1 - self.h_min
 
@@ -1122,6 +1125,7 @@ class PanelLocalProjections:
         self.design_columns[spec_name] = design_lookup
         return results
 
+    @styled
     def plot_irf(
         self,
         results: pd.DataFrame = None,
@@ -1160,7 +1164,7 @@ class PanelLocalProjections:
                     alpha=0.18,
                 )
 
-        ax.axhline(0.0, color="black", linestyle="--", linewidth=0.9)
+        ax.axhline(0.0, color=PALETTE["gray"], linestyle="--", linewidth=0.9)
         ax.set_xlabel("Horizon")
         ax.set_ylabel(ylabel)
         if title:

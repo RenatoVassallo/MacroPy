@@ -353,29 +353,3 @@ class ClassicVAR:
             self.figures["hd"] = generate_hd_plot(self, series_titles, shock_titles, title)
 
         return self.HD
-
-
-    def forecast(self, forecast_data):
-        """Compute forecasts."""
-        for d in range(len(self.beta_draws)):
-            frcst_no_shock, frcst_with_shocks = generate_forecasts(
-                forecast_data, self.beta_draws[d], self.Sigma_draws[d], self.options
-            )
-            self.forecasts["no_shocks"].append(frcst_no_shock)
-            self.forecasts["with_shocks"].append(frcst_with_shocks)
-        
-        self.forecasts["no_shocks"] = np.array(self.forecasts["no_shocks"])
-        self.forecasts["with_shocks"] = np.array(self.forecasts["with_shocks"])
-    
-    def run_full_analysis(self, forecast_data):
-        """Run the full pipeline: posterior sampling, IRFs, and forecasts."""
-        self.sample_posterior()
-        self.compute_irfs()
-        self.forecast(forecast_data)
-        
-        return {
-            "beta_draws": self.beta_draws,
-            "Sigma_draws": self.Sigma_draws,
-            "ir_draws": self.ir_draws,
-            "forecasts": self.forecasts
-        }

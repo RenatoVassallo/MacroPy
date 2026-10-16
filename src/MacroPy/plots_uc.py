@@ -8,8 +8,8 @@ Plotting helpers for the UC trend-cycle class (:mod:`MacroPy.uc`).
 * :func:`plot_gap_comparison`   - overlay the cycles implied by several
   fitted models (the "ladder" exhibit).
 
-Styling follows :mod:`MacroPy.plots_kalman` (BSE palette, matplotlib). Every
-function accepts a ``savepath`` to write a tight-bbox vector file for LaTeX.
+Every figure uses the MacroPy style (:mod:`MacroPy.style`) and every function
+accepts a ``savepath`` to write a tight-bbox vector file for LaTeX.
 """
 
 from __future__ import annotations
@@ -19,10 +19,8 @@ from typing import Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .style import styled
-from .plots_kalman import (
-    set_bse_style, _save, BSE_TEAL, BSE_ORANGE, BSE_NAVY, BSE_GRAY,
-)
+from ._plotting import _save
+from .style import PALETTE, styled
 
 _COMP_LABELS = {"cycle": "Cycle shock", "trend_level": "Trend-level shock",
                 "trend_growth": "Trend-growth shock"}
@@ -31,7 +29,7 @@ _COMP_LABELS = {"cycle": "Cycle shock", "trend_level": "Trend-level shock",
 def _shade_spans(ax, shade):
     """Shade (start, end) date spans (e.g. recession dating) on an axis."""
     for start, end in shade or []:
-        ax.axvspan(start, end, color=BSE_GRAY, alpha=0.14, lw=0)
+        ax.axvspan(start, end, color=PALETTE["gray"], alpha=0.14, lw=0)
 
 
 @styled
@@ -66,43 +64,43 @@ def plot_uc_decomposition(model, cred: float = 0.68, show_drift: bool = False,
                              constrained_layout=True)
     time = frame.index
 
-    axes[0].plot(time, model.y, color="black", lw=1.0, label=lab["observed"])
-    axes[0].plot(time, frame["trend"], color=BSE_ORANGE, lw=1.8,
+    axes[0].plot(time, model.y, color=PALETTE["median"], lw=1.0, label=lab["observed"])
+    axes[0].plot(time, frame["trend"], color=PALETTE["accent"], lw=1.8,
                  label=lab["trend"])
     if outer is not None:
         axes[0].fill_between(time, outer["trend_lower"], outer["trend_upper"],
-                             color=BSE_ORANGE, alpha=0.10,
+                             color=PALETTE["accent"], alpha=0.10,
                              label=lab["outer_band"])
     axes[0].fill_between(time, frame["trend_lower"], frame["trend_upper"],
-                         color=BSE_ORANGE, alpha=0.18, label=lab["band"])
+                         color=PALETTE["accent"], alpha=0.18, label=lab["band"])
     axes[0].set_title(lab["level_title"])
     if y_label:
         axes[0].set_ylabel(y_label)
     axes[0].legend(loc="best")
 
-    axes[1].axhline(0, color=BSE_GRAY, lw=0.7)
-    axes[1].plot(time, frame["cycle"], color=BSE_NAVY, lw=1.5)
+    axes[1].axhline(0, color=PALETTE["gray"], lw=0.7)
+    axes[1].plot(time, frame["cycle"], color=PALETTE["navy"], lw=1.5)
     if outer is not None:
         axes[1].fill_between(time, outer["cycle_lower"], outer["cycle_upper"],
-                             color=BSE_NAVY, alpha=0.09)
+                             color=PALETTE["navy"], alpha=0.09)
     axes[1].fill_between(time, frame["cycle_lower"], frame["cycle_upper"],
-                         color=BSE_NAVY, alpha=0.15)
+                         color=PALETTE["navy"], alpha=0.15)
     axes[1].set_title(lab["cycle_title"])
 
     if show_drift:
-        axes[2].plot(time, frame["drift"], color=BSE_TEAL, lw=1.5)
+        axes[2].plot(time, frame["drift"], color=PALETTE["ink"], lw=1.5)
         if outer is not None:
             axes[2].fill_between(time, outer["drift_lower"],
-                                 outer["drift_upper"], color=BSE_TEAL,
+                                 outer["drift_upper"], color=PALETTE["ink"],
                                  alpha=0.09)
         axes[2].fill_between(time, frame["drift_lower"], frame["drift_upper"],
-                             color=BSE_TEAL, alpha=0.15)
+                             color=PALETTE["ink"], alpha=0.15)
         axes[2].set_title(lab["drift_title"])
 
     for ax in axes:
         _shade_spans(ax, shade)
     if title:
-        fig.suptitle(title, color=BSE_TEAL, weight="bold")
+        fig.suptitle(title, color=PALETTE["ink"], weight="bold")
     _save(fig, savepath)
     return fig, axes
 
@@ -131,17 +129,17 @@ def plot_covid_scales(model, cred: float = 0.68, log_scale: bool = True,
     for ax, comp in zip(axes, comps):
         lam = model.draws[f"lambda_{comp}"][:, sl]
         med = np.median(lam, axis=0)
-        ax.plot(time, med, color=BSE_ORANGE, lw=1.8)
+        ax.plot(time, med, color=PALETTE["accent"], lw=1.8)
         ax.fill_between(time, np.percentile(lam, lo_q, axis=0),
                         np.percentile(lam, hi_q, axis=0),
-                        color=BSE_ORANGE, alpha=0.2)
-        ax.axhline(1.0, color=BSE_GRAY, lw=0.8, ls=":")
+                        color=PALETTE["accent"], alpha=0.2)
+        ax.axhline(1.0, color=PALETTE["gray"], lw=0.8, ls=":")
         ax.set_title(_COMP_LABELS.get(comp, comp))
         if log_scale:
             ax.set_yscale("log")
         ax.tick_params(axis="x", rotation=45)
     if title:
-        fig.suptitle(title, color=BSE_TEAL, weight="bold")
+        fig.suptitle(title, color=PALETTE["ink"], weight="bold")
     _save(fig, savepath)
     return fig, axes
 
@@ -161,8 +159,8 @@ def plot_gap_comparison(models: Dict[str, "object"], cred: Optional[float] = Non
     maps labels to pd.Series plotted dashed (e.g. the CBO output gap).
     """
     fig, ax = plt.subplots(figsize=(9, 3.8), constrained_layout=True)
-    colors = [BSE_NAVY, BSE_ORANGE, "#2E7D32", "#7E57C2", "#4CAF50", BSE_GRAY]
-    ax.axhline(0, color=BSE_GRAY, lw=0.7)
+    colors = PALETTE["cycle"]
+    ax.axhline(0, color=PALETTE["gray"], lw=0.7)
     _shade_spans(ax, shade)
     items = list(models.items())
     for i, (name, m) in enumerate(items):
@@ -182,7 +180,7 @@ def plot_gap_comparison(models: Dict[str, "object"], cred: Optional[float] = Non
                             label=f"{name}: {cred:.0%}")
     for j, (name, series) in enumerate((extra_series or {}).items()):
         ax.plot(series.index, series.to_numpy(), lw=1.4, ls="--",
-                color=["black", "#B71C1C"][j % 2], label=name)
+                color=[PALETTE["median"], PALETTE["conditional"]][j % 2], label=name)
     ax.legend(loc="best")
     ax.set_title(title)
     _save(fig, savepath)
@@ -204,7 +202,7 @@ def _smooth_ma(x, w: int):
 def plot_fan_chart(history, draws, dates,
                    bands=(0.90, 0.70, 0.50, 0.30, 0.10),
                    method: str = "quantile", smooth: Optional[int] = None,
-                   color: str = "#B0413E", center: str = "median",
+                   color: Optional[str] = None, center: str = "median",
                    center_label: str = "Central projection",
                    history_label: Optional[str] = None,
                    annotations: Optional[dict] = None,
@@ -249,13 +247,14 @@ def plot_fan_chart(history, draws, dates,
         Trim the plotted history start (the fan is unaffected).
     """
     import pandas as pd
+    color = PALETTE["conditional"] if color is None else color
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 4.2), constrained_layout=True)
     else:
         fig = ax.figure
     hist = history if history_from is None else history[history.index >= pd.Timestamp(history_from)]
     if hline is not None:
-        ax.axhline(hline, color=BSE_GRAY, lw=0.7)
+        ax.axhline(hline, color=PALETTE["gray"], lw=0.7)
 
     # prepend the last observed point so the fan is continuous with history
     dates = pd.DatetimeIndex(dates)
@@ -292,11 +291,11 @@ def plot_fan_chart(history, draws, dates,
         ax.plot(x, np.insert(path, 0, last), color="white", lw=2.4)
         ax.plot(x, np.insert(path, 0, last), color=color, lw=1.4,
                 label=center_label)
-    ax.plot(hist.index, hist.to_numpy(), color="black", lw=1.3,
+    ax.plot(hist.index, hist.to_numpy(), color=PALETTE["median"], lw=1.3,
             label=history_label)
-    ax.axvline(hist.index[-1], color=BSE_GRAY, lw=0.8, ls=":")
+    ax.axvline(hist.index[-1], color=PALETTE["gray"], lw=0.8, ls=":")
     for key, val in (annotations or {}).items():
-        ax.plot([pd.Timestamp(key)], [val], marker="D", ms=6, color="black",
+        ax.plot([pd.Timestamp(key)], [val], marker="D", ms=6, color=PALETTE["median"],
                 mfc="white", zorder=5)
     handles, labels_ = ax.get_legend_handles_labels()
     keep = [(h, l) for h, l in zip(handles, labels_) if l and l != "_nolegend_"]

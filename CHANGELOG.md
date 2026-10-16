@@ -4,6 +4,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`TimeVaryingVAR`**: time-varying parameter VARs with stochastic volatility,
+  a port of the replication code of Chan & Eisenstat (2018, JAE). One class
+  covers the paper's seven specifications (`model=`): `C`, `C-SV`, `TVP`,
+  `TVP-SV`, `TVP-R1-SV` (drifting contemporaneous matrix `A_t`), `TVP-R2-SV`
+  (drifting lag coefficients and intercepts) and `TVP-R3-SV` (drifting
+  intercepts). The states are drawn jointly by the precision-based sampler,
+  with the `Tk x Tk` precision assembled in LAPACK band storage, and the
+  log-volatilities by the Kim-Shephard-Chib auxiliary mixture sampler.
+  `presample` fixes a common estimation sample across lag lengths.
+- Draws are stored in two layers: hyperparameters at every retained sweep,
+  state paths thinned (`thin=None` keeps at most 1000); `storage_mb()` and a
+  notice report the memory.
+- Structural analysis date by date (recursive identification
+  `A_t^{-1} Sigma_t^{1/2}`): `compute_irfs` (posterior median and bands at
+  every date, draws only for the requested dates), `compute_fevd` (FEVD over
+  time), `compute_hd` (historical decomposition with exact identity per draw),
+  `forecast` / `forecast_frame` (predictive density with or without parameter
+  drift), `volatility_frame`, `coefficient_frame`.
+- Model comparison, optional and expensive: `log_marginal_likelihood`
+  (importance sampling with the states integrated out: coefficients
+  analytically, log-volatilities by an inner importance sampler at the mode
+  of `p(h | y)` found by EM) and `dic`, both with a time and memory notice,
+  seeded chunks and `n_jobs` parallelism; `compare_tvpvar` tabulates them.
+  `logml` is the log of the mean of all importance weights; the paper's
+  mean of batch log-means, biased downward when batches are small, is
+  reported as `logml_batch_mean`.
+- `plots_tvpvar`: `plot_tvp_volatility`, `plot_tvp_coefficients`,
+  `plot_tvp_irfs`, `plot_irf_surface` (3D), `plot_irf_over_time`,
+  `plot_fevd_over_time`, `plot_tvp_fan_chart`; `generate_tvpvar_summary`.
+- `tutorials/tutorial_tvpvar.ipynb` (Peru: inflation, GDP growth, interbank
+  rate) and `tests/test_tvpvar.py`.
+
+### Added (figures and style)
+- **One entry point for the MacroPy look.** `set_style(context, font)`,
+  `reset_style()` and `style_context()` apply the style to the user's figures
+  and to MacroPy's (one call restyles both). Contexts `"paper"` (smaller type,
+  300 dpi exports), `"notebook"` and `"slides"` (larger type); `font="serif"`,
+  `"sans"` or a family name, with formulas in the matching math set.
+- The style now sets a categorical colour cycle (navy and orange, then
+  Okabe-Ito hues), concise date ticks and tight-bbox exports, so plain
+  `ax.plot` calls inherit the MacroPy identity.
+- Bundled style sheet: `plt.style.use("MacroPy.macropy")`.
+- `color_palette(n)`, `colormap("diverging" | "sequential")` (not registered
+  globally) and the `CONTEXTS` table.
+- Plotting functions return a plain `(fig, axes)` tuple (or list) that notebooks
+  do not echo: a plotting call ending a cell shows only the figure, without a
+  trailing `;`.
+
+### Changed (figures and style)
+- Stacked areas and bars (FEVD, historical decomposition) use the MacroPy
+  categorical palette; the TVP IRF surface defaults to a diverging map centred
+  at zero.
+- `plots_uc`, `plots_tvarsv` and `plots_kalman` take their colours from
+  `PALETTE` at call time: edits to `PALETTE` now reach them (the former
+  constants were frozen at import). Hard-coded colours replaced by roles.
+- Shared layout helpers moved to the private `_plotting.py`; no plotting
+  module depends on `plots_kalman` any longer.
+- `PanelLocalProjections.plot_irf` is drawn in the MacroPy style.
+- `BayesianPanelVAR` takes a `seed` (last constructor argument): per-stage
+  generators for `sample_posterior` and `forecast`, as in `BayesianVAR`;
+  `failed_stability_draws` now counts the last run only.
+- `SmoothLocalProjections.estimate` rejects an unknown `projection_type`
+  (anything but `'reg'` used to run the smooth estimator silently).
+
+### Removed
+- `ClassicVAR.forecast` and `ClassicVAR.run_full_analysis`: leftovers of an
+  early version that referenced attributes and a helper that do not exist and
+  always failed with `NameError`. Forecasts come from `BayesianVAR.forecast`.
+
+### Deprecated
+- `set_bse_style()` (use `set_style()`) and the `BSE_*` colour constants (use
+  `PALETTE[...]`): they still work and emit a `DeprecationWarning`.
+
+### Fixed
+- Invalid escape sequence in the `plots_kalman` docstring (a
+  `DeprecationWarning` on import, a `SyntaxError` under `-W error`).
+- `BayesianVAR.plot_exog_posteriors` documented a plotnine return value; it
+  returns matplotlib `(fig, axes)`.
+
+### Validation (TimeVaryingVAR)
+- Against the authors' MATLAB code on their US data (1955-2014, p = 2): log
+  marginal likelihoods agree for C and C-SV to Monte Carlo error, and for the
+  SV models once the same estimator and number of draws are used; posterior
+  volatility paths correlate above 0.999. The TVP posterior is multimodal on
+  those data (chains settle on different coefficients to absorb the drift);
+  chains in the MATLAB run's mode reproduce its marginal likelihood.
+- Integrated likelihoods checked against an exact Kalman filter, a 1M-particle
+  filter (C-SV) and a Rao-Blackwellised particle filter (TVP-SV); the C-model
+  marginal likelihood against exact quadrature.
+
 ## [0.2.0] - 2026-09-19
 
 Minor-version bump: figures are now matplotlib objects that are returned

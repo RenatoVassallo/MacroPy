@@ -86,3 +86,37 @@ def test_import_does_not_silence_warnings():
                      if f[0] == "ignore" and f[1] is None and f[2] is Warning and f[3] is None]
     assert not global_ignore
     assert MacroPy.__version__
+
+
+def test_classic_var_has_no_forecast_stub():
+    assert not hasattr(ClassicVAR, "forecast")
+    assert not hasattr(ClassicVAR, "run_full_analysis")
+
+
+def _panel(seed=0, T=60):
+    rng = np.random.default_rng(seed)
+    frames = []
+    for unit in ("a", "b", "c"):
+        y = np.zeros((T, 2))
+        for t in range(1, T):
+            y[t] = 0.5 * y[t - 1] + rng.standard_normal(2)
+        frames.append(pd.DataFrame({"unit": unit,
+                                    "date": pd.date_range("2000-03-01", periods=T, freq="QS"),
+                                    "y1": y[:, 0], "y2": y[:, 1]}))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_panel_var_seed_is_reproducible():
+    from MacroPy import BayesianPanelVAR
+    kw = dict(data=_panel(), endog=["y1", "y2"], lags=1, post_draws=60, burnin=0.5, fhor=3)
+    a = BayesianPanelVAR(**kw, seed=7)
+    b = BayesianPanelVAR(**kw, seed=7)
+    da, db = a.sample_posterior(), b.sample_posterior()
+    np.testing.assert_array_equal(da["beta_draws"], db["beta_draws"])
+    np.testing.assert_array_equal(da["lambda_draws"], db["lambda_draws"])
+    np.testing.assert_array_equal(a.forecast()["forecast_draws"], b.forecast()["forecast_draws"])
+    again = a.sample_posterior()                            # idempotent with a seed
+    np.testing.assert_array_equal(again["Sigma_draws"], db["Sigma_draws"])
+    c = BayesianPanelVAR(**kw, seed=8)
+    assert not np.array_equal(c.sample_posterior()["beta_draws"], da["beta_draws"])
+

@@ -43,6 +43,7 @@ class BayesianPanelVAR:
         irf_1std: int = 1,
         max_tries: int = 100,
         allow_unbalanced: bool = False,
+        seed: Optional[int] = None,
     ):
         """
         Hierarchical Bayesian Panel VAR with unit-specific dynamics and pooled lag coefficients.
@@ -83,6 +84,13 @@ class BayesianPanelVAR:
             If True, allow staggered country samples and trim leading/trailing
             missing observations for each unit. Internal missing observations
             inside a country sample are still rejected.
+        seed : int, optional
+            Random seed for full reproducibility. Each stochastic method
+            (`sample_posterior`, `forecast`) draws from its own deterministic
+            generator derived from the seed, so two runs with the same data and
+            seed produce identical draws regardless of call order, and repeated
+            calls to the same method are idempotent. None (default) keeps
+            non-deterministic behavior.
         """
         if not isinstance(data, pd.DataFrame):
             raise ValueError("`data` must be a pandas DataFrame.")
@@ -144,6 +152,7 @@ class BayesianPanelVAR:
         self.figures = {}   # figures from the last plot_* calls
         self.max_tries = max_tries
         self.allow_unbalanced = allow_unbalanced
+        self.seed = seed
 
         self.n_units = len(self.y_panel)
         self.n_endo = self.y_panel[0].shape[1]
@@ -422,7 +431,20 @@ class BayesianPanelVAR:
 
         return fevd
 
-    def _draw_beta(self, unit_idx, c_vec, sigma, bbar, lambda_value, fallback_beta):
+    _RNG_STAGES = {"posterior": 0, "forecast": 1}
+
+    def _rng(self, stage: str) -> np.random.Generator:
+        """
+        Deterministic per-stage generator (as in BayesianVAR): with a seed,
+        every call for a given stage starts from the same state, so
+        `sample_posterior` and `forecast` are idempotent and independent of
+        call order. Without a seed, fresh entropy is used.
+        """
+        if self.seed is None:
+            return np.random.default_rng()
+        return np.random.default_rng([int(self.seed), self._RNG_STAGES[stage]])
+
+    def _draw_beta(self, unit_idx, c_vec, sigma, bbar, lambda_value, fallback_beta, rng):
         yj = self.yy_units[unit_idx]
         xj = self.X_lag_units[unit_idx]
         zj = self.Z_units[unit_idx]
@@ -442,7 +464,7 @@ class BayesianPanelVAR:
         chol = self._safe_cholesky(post_cov)
 
         for _ in range(self.max_tries):
-            beta_draw = post_mean + chol @ np.random.randn(self.k_beta)
+            beta_draw = post_mean + chol @ rng.standard_normal(self.k_beta)
             beta_mat = self.reshape_beta(beta_draw, self.n_lag_coeff_eq, self.n_endo)
             companion = self.build_companion_matrix(beta_mat, self.n_endo, self.lags)
             if self.is_stable(companion):
@@ -450,7 +472,7 @@ class BayesianPanelVAR:
 
         return fallback_beta.copy(), True
 
-    def _draw_exogenous(self, unit_idx, beta_vec, sigma):
+    def _draw_exogenous(self, unit_idx, beta_vec, sigma, rng):
         if self.n_exo == 0:
             return np.zeros((0,))
 
@@ -468,9 +490,9 @@ class BayesianPanelVAR:
         post_mean = post_cov @ rhs
         chol = self._safe_cholesky(post_cov)
 
-        return post_mean + chol @ np.random.randn(self.k_exo_total)
+        return post_mean + chol @ rng.standard_normal(self.k_exo_total)
 
-    def _draw_lambda(self, beta_draws, bbar):
+    def _draw_lambda(self, beta_draws, bbar, rng):
         scale = float(self.prior_params["lambda_scale"])
         for unit_idx in range(self.n_units):
             diff = beta_draws[unit_idx] - bbar
@@ -478,9 +500,9 @@ class BayesianPanelVAR:
 
         df = self.prior_params["lambda_df"] + self.n_units * self.k_beta
         scale = max(scale, 1e-12)
-        return scale / np.random.chisquare(df)
+        return scale / rng.chisquare(df)
 
-    def _draw_bbar(self, beta_draws, lambda_value, fallback_bbar):
+    def _draw_bbar(self, beta_draws, lambda_value, fallback_bbar, rng):
         precision = np.zeros((self.k_beta, self.k_beta))
         rhs = np.zeros(self.k_beta)
         for unit_idx in range(self.n_units):
@@ -494,7 +516,7 @@ class BayesianPanelVAR:
         chol = self._safe_cholesky(post_cov)
 
         for _ in range(self.max_tries):
-            draw = post_mean + chol @ np.random.randn(self.k_beta)
+            draw = post_mean + chol @ rng.standard_normal(self.k_beta)
             draw_mat = self.reshape_beta(draw, self.n_lag_coeff_eq, self.n_endo)
             companion = self.build_companion_matrix(draw_mat, self.n_endo, self.lags)
             if self.is_stable(companion):
@@ -512,6 +534,8 @@ class BayesianPanelVAR:
             Posterior draws for unit-specific lag coefficients, exogenous coefficients,
             covariance matrices, pooled mean coefficients, and the pooling parameter.
         """
+        rng = self._rng("posterior")
+        self.failed_stability_draws = {"unit_beta": 0, "bbar": 0}   # per run
         beta_state = self.beta_ols.copy()
         c_state = self.c_ols.copy()
         sigma_state = self.Sigma_ols.copy()
@@ -533,6 +557,7 @@ class BayesianPanelVAR:
                     bbar=bbar_state,
                     lambda_value=lambda_state,
                     fallback_beta=beta_state[unit_idx],
+                    rng=rng,
                 )
                 self.failed_stability_draws["unit_beta"] += int(failed_beta)
 
@@ -540,6 +565,7 @@ class BayesianPanelVAR:
                     unit_idx=unit_idx,
                     beta_vec=beta_draw,
                     sigma=sigma_state[unit_idx],
+                    rng=rng,
                 )
 
                 coeffs = self._combine_coefficients(beta_draw, c_draw)
@@ -548,14 +574,15 @@ class BayesianPanelVAR:
                 sigma_draw = invwishart.rvs(
                     df=self.sigma_prior_df + self.yy_units[unit_idx].shape[0],
                     scale=scale,
+                    random_state=rng,
                 )
 
                 beta_state[unit_idx] = beta_draw
                 c_state[unit_idx] = c_draw
                 sigma_state[unit_idx] = sigma_draw
 
-            lambda_state = self._draw_lambda(beta_state, bbar_state)
-            bbar_state, failed_bbar = self._draw_bbar(beta_state, lambda_state, bbar_state)
+            lambda_state = self._draw_lambda(beta_state, bbar_state, rng)
+            bbar_state, failed_bbar = self._draw_bbar(beta_state, lambda_state, bbar_state, rng)
             self.failed_stability_draws["bbar"] += int(failed_bbar)
 
             beta_store.append(beta_state.copy())
@@ -788,6 +815,7 @@ class BayesianPanelVAR:
         Generate unit-specific unconditional forecasts for the panel.
         """
         self._check_posterior_draws()
+        rng = self._rng("forecast")
         fhor = int(fhor or self.fhor)
         n_draws = self.beta_draws.shape[0]
 
@@ -825,7 +853,7 @@ class BayesianPanelVAR:
                         x_t = np.hstack((x_t, z_future[horizon]))
 
                     deterministic = x_t @ coeffs
-                    shock = np.random.multivariate_normal(np.zeros(self.n_endo), sigma)
+                    shock = rng.multivariate_normal(np.zeros(self.n_endo), sigma)
                     simulated = deterministic + shock
 
                     self.mean_forecasts[draw_idx, horizon, unit_idx, :] = deterministic

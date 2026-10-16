@@ -7,6 +7,7 @@ __all__ = [
     "generate_summary",
     "generate_uc_summary",
     "generate_tvarsv_summary",
+    "generate_tvpvar_summary",
 ]
 
 try:
@@ -311,6 +312,96 @@ Version {__version__}
 
 $$
 {_tvarsv_equations()}
+$$
+"""
+
+    return Markdown(summary)
+
+
+_TVP_DESCRIPTIONS = {
+    "C": "Constant coefficients, constant variances",
+    "C-SV": "Constant coefficients, stochastic volatility",
+    "TVP": "Time-varying B_t and A_t, constant variances",
+    "TVP-SV": "Time-varying B_t and A_t, stochastic volatility",
+    "TVP-R1-SV": "Time-varying A_t only, stochastic volatility",
+    "TVP-R2-SV": "Time-varying B_t (with intercepts) only, stochastic volatility",
+    "TVP-R3-SV": "Time-varying intercepts only, stochastic volatility",
+}
+
+
+def _tvpvar_equations(settings):
+    mu = r"\mu_t" if settings.drift in ("all", "coef", "intercept") else r"\mu"
+    B = r"B_{j,t}" if settings.drift in ("all", "coef") else r"B_j"
+    A = r"A_t" if settings.drift in ("all", "impact") else r"A"
+    if settings.sv:
+        var = (r"\Sigma_t &= \mathrm{diag}\big(e^{h_{1t}},\dots,e^{h_{nt}}\big), \qquad "
+               r"h_t = h_{t-1} + \zeta_t, \quad \zeta_t \sim \mathcal{N}(0, \mathrm{diag}(\sigma^2_h))")
+    else:
+        var = r"\Sigma_t &= \Sigma = \mathrm{diag}(\sigma^2_1,\dots,\sigma^2_n)"
+    rw = (r"\\ \theta_t &= \theta_{t-1} + \eta_t, \quad \eta_t \sim \mathcal{N}(0, "
+          r"\mathrm{diag}(\sigma^2_\theta)) \quad \text{(time-varying block)}"
+          if settings.drift else "")
+    return rf"""
+\begin{{align*}}
+{A}\, y_t &= {mu} + \sum_{{j=1}}^{{p}} {B}\, y_{{t-j}} + \varepsilon_t, \qquad
+\varepsilon_t \sim \mathcal{{N}}(0, \Sigma_t) \\
+{var}{rw}
+\end{{align*}}
+"""
+
+
+def generate_tvpvar_summary(settings):
+    """
+    Generate a structured Markdown summary for the time-varying parameter VAR
+    (Chan & Eisenstat, 2018), matching the layout of :func:`generate_summary`.
+    """
+    linkedin_text = "Renato Vassallo"
+    linkedin_url = "https://www.linkedin.com/in/renatovassallo"
+    pp = settings.prior_params
+    total_draws = settings.post_draws
+    sample_start = settings.yy_dates[0].date()
+    sample_end = settings.yy_dates[-1].date()
+    vol_line = (f"random-walk log-volatilities, IG prior mean {pp['vol_var']:g} "
+                f"(df {pp['vol_df']:g})" if settings.sv
+                else f"constant, IG prior mean {pp['sigma_var']:g} (df {pp['sigma_df']:g})")
+
+    summary = f"""
+**MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**
+Developed by [{linkedin_text}]({linkedin_url}) - Institute for Economic Analysis (IAE-CSIC)
+Version {__version__}
+
+---
+
+**Model Specifications**
+- **Model Type**: {settings.model}, {_TVP_DESCRIPTIONS[settings.model]} (Chan & Eisenstat, 2018)
+- **Endogenous Variables**: {', '.join(map(str, settings.names))} (recursive ordering)
+- **Number of Lags (p)**: {settings.lags}
+- **Sample Period**: {sample_start} to {sample_end} ({settings.T} observations, {settings.presample} presample)
+- **Time-varying States per Period**: {settings.ks}
+- **Constant Coefficients**: {settings.kc}
+
+---
+
+**Bayesian Estimation Settings**
+- **Posterior Simulation**: Gibbs sampling (precision-based states, auxiliary mixture SV)
+- **Coefficient Priors**: N(0, {pp['coef_var']:g}) for constant coefficients and initial states
+- **State Innovations**: IG prior means of sd {pp['state_sd']:g} (lags, A_t) and {pp['intercept_state_sd']:g} (intercepts), df {pp['state_df']:g}
+- **Variances**: {vol_line}
+- **Total Draws**: {total_draws}
+- **Burn-in**: {settings.burnin} ({settings.burnin / total_draws:.0%})
+
+---
+
+**Impulse Response Details**
+- **IRF Horizon**: {settings.hor}
+- **Identification**: recursive, A_t^(-1) Sigma_t^(1/2), date by date
+
+---
+
+**Model Equations**
+
+$$
+{_tvpvar_equations(settings)}
 $$
 """
 

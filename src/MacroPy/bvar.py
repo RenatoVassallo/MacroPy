@@ -646,8 +646,9 @@ class BayesianVAR:
 
         Returns
         -------
-        plotnine.ggplot
-            The plot object (also rendered inline via IPython display).
+        (fig, axes)
+            The matplotlib figure and its axes (also stored in
+            ``figures["exog_coefficients"]``).
         """
         plot = generate_exog_coeff_plot(
             self, bins=bins, ncol=ncol, series_titles=series_titles, palette=palette,

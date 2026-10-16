@@ -24,8 +24,9 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
 ✅ Threshold VAR with stochastic volatility and uncertainty shocks (Alessandri & Mumtaz, 2019)  
+✅ Time-varying parameter VARs with stochastic volatility, compared by marginal likelihood and DIC (Chan & Eisenstat, 2018)  
 ✅ Trend-cycle decomposition: HP filter, Clark UC by MLE, and Bayesian UC with COVID variance scales (Grant & Chan, 2017; Lenza & Primiceri, 2022)  
-✅ High-quality plots using `ggplot2`-style, ready for LaTeX or reports  
+✅ Publication-ready matplotlib figures in one consistent MacroPy style, for notebooks, papers and slides  
 
 **Specifically for the `BayesianVAR` class:**
 
@@ -86,6 +87,7 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - 🏗️ [`tutorial_bpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bpvar.ipynb): Hierarchical Bayesian Panel VAR  
 - 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
 - ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
+- 🕰️ [`tutorial_tvpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvpvar.ipynb): Time-varying parameter VARs with stochastic volatility on Peruvian data: IRFs by date and in 3D, FEVD over time, historical decomposition, fan charts, and seven specifications compared by marginal likelihood and DIC (Chan & Eisenstat, 2018)
 - 📐 [`tutorial_uc_gdp.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_uc_gdp.ipynb): Trend-cycle decomposition ladder on US GDP, from the HP filter to a Bayesian UC model with COVID variance scales
 
 ---
