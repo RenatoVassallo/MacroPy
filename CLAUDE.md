@@ -23,7 +23,10 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   `(d, Z*)` under the conjugate dummy prior (`split_posterior`), then iid NIW
   draws with exact rejection of unstable regimes. The authors' RW-Metropolis
   threshold step sticks to its starting mode on these models.
-  `log_marginal_likelihood` (TVAR vs linear VAR). Comparison helpers
+  `log_marginal_likelihood` (TVAR vs linear VAR). COVID treatment with the
+  `BayesianVAR` arguments (`covid_mode="lenza-primiceri"` scales estimated on
+  the linear VAR with the same prior, or `"dummies"` = window rows and the
+  lag rows after it dropped from the likelihood). Comparison helpers
   `compare_threshold_models` and `plot_{regime,irf,volatility}_comparison`
   (in `plots_tvarsv.py`); both classes have `residual_volatility` and
   `log_predictive_score` (simulated paths, Gaussian last step);

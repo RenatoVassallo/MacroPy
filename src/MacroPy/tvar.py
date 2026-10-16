@@ -213,6 +213,16 @@ def _split_posterior(y: np.ndarray, x: np.ndarray, Fstar: np.ndarray, prior: _Du
     return out
 
 
+def _parse_window(window) -> tuple:
+    """Inclusive ``(start, end)`` timestamps; bare periods such as ``"2020Q1"`` cover their span."""
+    start, end = window
+    start_ts = start if isinstance(start, pd.Timestamp) else pd.Period(str(start)).start_time
+    end_ts = end if isinstance(end, pd.Timestamp) else pd.Period(str(end)).end_time
+    if end_ts < start_ts:
+        raise ValueError("covid_window end precedes its start.")
+    return start_ts, end_ts
+
+
 def _draw_threshold(lower: float, upper: float, mean: float, sd: float,
                     rng: np.random.Generator) -> float:
     """``Z* ~ N(mean, sd^2)`` truncated to ``[lower, upper)`` (inverse CDF, tail safe)."""
@@ -302,6 +312,8 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
     B = (draw["B1"], draw["B2"])
     C = (cholesky(draw["S1"]), cholesky(draw["S2"]))
     tar, delay, y = float(draw["tar"]), int(draw["delay"]), draw["y"]
+    pos = draw.get("pos", np.arange(y.shape[0]))      # likelihood rows -> rows of `y`
+    kept = draw.get("kept", np.ones(y.shape[0], dtype=bool))
     NL = N * L
     pre = max(L, delay)
     # impact of shock s (row s): column s of the Cholesky factor, unit-normalised if asked
@@ -314,8 +326,9 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
 
     out: dict = {}
     for r, (reg, mask) in enumerate((("regime1", draw["e1"]), ("regime2", ~draw["e1"]))):
-        idx = np.where(mask)[0]
+        idx = pos[np.where(mask)[0]]
         idx = idx[idx >= pre - 1]
+        idx = idx[[kept[t - pre + 1:t + 1].all() for t in idx]]   # histories inside a hole are skipped
         if idx.size == 0:
             out[reg] = None
             continue
@@ -418,11 +431,40 @@ class ThresholdVAR:
         Overrides for :data:`TVAR_PRIOR_DEFAULTS`; unknown keys raise.
     seed : int, optional
         Base seed (block ``i`` of draws uses ``seed + i``).
+    covid_mode : {"lenza-primiceri", "dummies"}, optional
+        Treatment of the observations in ``covid_window``, as in
+        :class:`BayesianVAR`. ``"lenza-primiceri"``: the rows are divided by
+        volatility scales ``s_t >= 1`` before estimation (exact GLS under the
+        conjugate prior; ``log_marginal_likelihood`` includes the Jacobian),
+        so they stay in the sample with a smaller weight. ``"dummies"``: the
+        rows leave the likelihood altogether, which is what one dummy per
+        observation with a diffuse prior does; the lags are still built on
+        the full data, so the sample keeps its timing and the threshold
+        variable its delays.
+    covid_window : tuple, optional
+        Inclusive ``(start, end)``; periods such as ``("2020Q1", "2021Q4")``
+        or timestamps.
+    covid_scales : float or array-like, optional
+        Fixed scales for ``"lenza-primiceri"`` (a scalar or one value per
+        window observation). If None they are estimated by empirical Bayes
+        on the linear VAR with the same prior: the first ``covid_n_free``
+        free, the rest decaying geometrically toward one
+        (``s_{m+j} = 1 + (s_m - 1) rho^j``). Stored as ``covid_scales``.
+    covid_n_free : int, default 3
+        Freely estimated scales at the start of the window; set it to the
+        window length to free them all.
+    covid_drop_lags : bool, default True
+        Under ``"dummies"``, also drop the rows whose lagged regressors fall
+        in the window (the ``lags`` observations after it), so that the
+        outliers never enter the right-hand side either.
 
     Notes
     -----
     The estimation sample starts at ``max(lags + training, max_delay)``, so
-    every delay is evaluated on the same observations.
+    every delay is evaluated on the same observations. Under
+    ``covid_mode="dummies"``, ``sample_dates`` lists the rows that remain,
+    ``regime_probability`` is ``NaN`` on the dropped dates and the GIRF
+    histories never straddle a hole.
 
     The posterior of ``(Z*, d)`` is computed exactly on all admissible splits
     (``split_posterior`` after sampling) and the draws are independent; see
@@ -457,6 +499,11 @@ class ThresholdVAR:
         threshold_prior_mean: Optional[float] = None,
         prior_params: Optional[dict] = None,
         seed: Optional[int] = None,
+        covid_mode: Optional[str] = None,
+        covid_window: Optional[tuple] = None,
+        covid_scales: Optional[Union[float, Sequence[float]]] = None,
+        covid_n_free: int = 3,
+        covid_drop_lags: bool = True,
     ):
         if not isinstance(y, pd.DataFrame):
             raise ValueError("`y` must be a pandas DataFrame with a datetime index.")
@@ -464,6 +511,10 @@ class ThresholdVAR:
             raise ValueError("`y` cannot contain missing values.")
         if lags < 1 or max_delay < 1:
             raise ValueError("`lags` and `max_delay` must be at least 1.")
+        if covid_mode not in (None, "lenza-primiceri", "dummies"):
+            raise ValueError("covid_mode must be None, 'lenza-primiceri' or 'dummies'.")
+        if (covid_mode is None) != (covid_window is None):
+            raise ValueError("`covid_mode` and `covid_window` go together.")
 
         self.names = list(y.columns)
         self.dates = y.index
@@ -500,24 +551,113 @@ class ThresholdVAR:
         self.EX = 1                                   # constant
         self.k = self.N * lags + self.EX
         self.start = _sample_start(lags, training, max_delay)
-        self.T = self.data.shape[0] - self.start
+        self.covid_mode, self.covid_window = covid_mode, covid_window
+        self.covid_dates = pd.DatetimeIndex([])
+        self.covid_scales: Optional[np.ndarray] = None
+        in_window = np.zeros(len(self.dates), dtype=bool)
+        if covid_mode is not None:
+            a, b = _parse_window(covid_window)
+            in_window = (self.dates >= a) & (self.dates <= b)
+            if not in_window[self.start:].any():
+                raise ValueError("covid_window contains no observations of the estimation sample.")
+            self.covid_dates = self.dates[self.start:][in_window[self.start:]]
+        keep = np.ones(len(self.dates), dtype=bool)
+        if covid_mode == "dummies":                   # rows out of the likelihood
+            keep &= ~in_window
+            if covid_drop_lags:                       # and the rows whose lags fall in the window
+                for j in range(1, lags + 1):
+                    keep[j:] &= ~in_window[:-j]
+        self.keep = keep[self.start:]
+        self.T = int(self.keep.sum())
         if self.T <= 2 * self.k:
             raise ValueError(f"{self.T} observations are too few for two regimes with "
                              f"{self.k} coefficients per equation.")
+        self.weights = np.ones(self.T)                # 1 / s_t on the rows of the likelihood
+        if covid_mode == "lenza-primiceri":
+            widx = np.flatnonzero(in_window[self.start:])
+            self.covid_scales = self._resolve_covid_scales(widx, covid_scales, covid_n_free)
+            self.weights[widx] = 1.0 / self.covid_scales
         self.draws: Optional[dict] = None
+
+    # ------------------------------------------------------------------
+    def _rows(self):
+        """Unweighted rows of the likelihood: ``y``, the regressors and ``F_{t-d}``."""
+        y = self.data[self.start:][self.keep]
+        x = _build_regressors(self.data, self.lags)[self.start:][self.keep]
+        f = self.data[:, self.tarvar]
+        Fstar = np.stack([f[self.start - d:self.data.shape[0] - d]
+                          for d in range(1, self.max_delay + 1)])[:, self.keep]
+        return y, x, Fstar
+
+    def _prior(self, y: np.ndarray) -> _DummyPrior:
+        """The dummy prior scaled with the moments of ``y`` (weighted rows under scales)."""
+        pp = self.prior_params
+        mu, sigma, delta = _ar1_moments(y, pp["RW"])
+        return _DummyPrior(*_create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"],
+                                            self.lags, mu, sigma, self.N))
+
+    def _resolve_covid_scales(self, widx: np.ndarray, covid_scales, n_free: int) -> np.ndarray:
+        """Fixed scales if given, otherwise Lenza-Primiceri estimates."""
+        W = widx.size
+        if covid_scales is not None:
+            scales = np.asarray(covid_scales, dtype=float).ravel()
+            if scales.size == 1:
+                scales = np.repeat(scales, W)
+            if scales.size != W:
+                raise ValueError(f"covid_scales must be a scalar or have one value per window "
+                                 f"observation ({W}); got {scales.size}.")
+            if np.any(scales < 1.0):
+                raise ValueError("covid_scales must be >= 1.")
+            return scales
+        return self._estimate_covid_scales(widx, n_free)
+
+    def _estimate_covid_scales(self, widx: np.ndarray, n_free: int) -> np.ndarray:
+        """Lenza-Primiceri scales by empirical Bayes on the linear VAR with this prior.
+
+        The first ``n_free`` window observations get free scales and the rest
+        decay geometrically toward one, ``s_{m+j} = 1 + (s_m - 1) rho^j``; the
+        objective is the exact marginal likelihood of the (GLS-weighted) linear
+        VAR under the dummy prior, Jacobian included, so the scales are chosen
+        before any regime is looked at.
+        """
+        from scipy.optimize import minimize
+
+        y, x, _ = self._rows()
+        T, N = y.shape
+        W = widx.size
+        m = int(min(max(n_free, 1), W))
+
+        def scales_from(theta):
+            s = np.empty(W)
+            s[:m] = np.exp(theta[:m])
+            if W > m:
+                s[m:] = 1.0 + (s[m - 1] - 1.0) * theta[m] ** np.arange(1, W - m + 1)
+            return s
+
+        def neg_logml(theta):
+            w = np.ones(T)
+            w[widx] = 1.0 / scales_from(theta)
+            yw, xw = y * w[:, None], x * w[:, None]
+            prior = self._prior(yw)
+            val = prior.log_ml(xw.T @ xw, xw.T @ yw, yw.T @ yw, T) + N * np.log(w).sum()
+            return 1e12 if not np.isfinite(val) else -val
+
+        resid = y - x @ np.linalg.lstsq(x, y, rcond=None)[0]       # OLS heuristic to start
+        base = np.median(np.abs(resid), axis=0) + 1e-12
+        s0 = np.clip(np.median(np.abs(resid[widx[:m]]) / base[None, :], axis=1), 1.5, 50.0)
+        x0 = np.concatenate([np.log(s0), [0.7]]) if W > m else np.log(s0)
+        bounds = [(0.0, np.log(500.0))] * m + ([(0.01, 0.99)] if W > m else [])
+        res = minimize(neg_logml, x0, method="L-BFGS-B", bounds=bounds)
+        self._covid_opt = res
+        return scales_from(res.x)
 
     # ------------------------------------------------------------------
     def _setup(self):
         """Estimation sample, threshold variable by delay and the dummy prior."""
-        pp = self.prior_params
-        y = self.data[self.start:]
-        x = _build_regressors(self.data, self.lags)[self.start:]
-        f = self.data[:, self.tarvar]
-        Fstar = np.stack([f[self.start - d:self.data.shape[0] - d]
-                          for d in range(1, self.max_delay + 1)])
-        mu, sigma, delta = _ar1_moments(y, pp["RW"])
-        prior = _DummyPrior(*_create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"],
-                                             self.lags, mu, sigma, self.N))
+        y, x, Fstar = self._rows()
+        w = self.weights[:, None]                     # GLS rows: y_t / s_t, x_t / s_t
+        y, x = y * w, x * w
+        prior = self._prior(y)
         tar_mean = (float(Fstar[0].mean()) if self.threshold_prior_mean is None
                     else float(self.threshold_prior_mean))
         return y, x, Fstar, prior, tar_mean
@@ -581,7 +721,10 @@ class ThresholdVAR:
 
         pooled = {key: np.concatenate([b[key] for b in blocks])
                   for key in ("B1", "B2", "S1", "S2", "tar", "delay", "e1")}
-        pooled.update(y=y, x=x, T=y.shape[0])
+        # histories and forecasts use the unweighted, contiguous sample; `pos` maps
+        # the rows of the likelihood (and of `e1`) into it, `kept` flags them
+        pooled.update(y=self.data[self.start:], x=x, T=y.shape[0],
+                      pos=np.flatnonzero(self.keep), kept=self.keep.copy())
         self.draws = pooled
         self.n_draws = pooled["tar"].shape[0]
         self.stable_share = n_chains * n_keep / sum(b["n_proposed"] for b in blocks)
@@ -607,9 +750,10 @@ class ThresholdVAR:
             raise RuntimeError("Call sample_posterior() first.")
         y, x, _, prior, _ = self._setup()
         sp = self.split_posterior
+        jacobian = self.N * float(np.log(self.weights).sum())     # scaled rows: y_t = s_t y~_t
         tvar = float(logsumexp(sp["log_prior_mass"] + sp["log_ml"])
-                     - logsumexp(sp["log_prior_mass"]))
-        linear = float(prior.log_ml(x.T @ x, x.T @ y, y.T @ y, y.shape[0]))
+                     - logsumexp(sp["log_prior_mass"])) + jacobian
+        linear = float(prior.log_ml(x.T @ x, x.T @ y, y.T @ y, y.shape[0])) + jacobian
         return pd.Series({"TVAR": tvar, "linear VAR": linear,
                           "log Bayes factor": tvar - linear}, name="log marginal likelihood")
 
@@ -619,8 +763,8 @@ class ThresholdVAR:
 
     @property
     def sample_dates(self) -> pd.DatetimeIndex:
-        """Dates of the estimation sample."""
-        return self.dates[self.start:]
+        """Dates of the estimation sample (after `exclude`, the rows that remain)."""
+        return self.dates[self.start:][self.keep]
 
     # ------------------------------------------------------------------
     def threshold_summary(self) -> pd.DataFrame:
@@ -633,10 +777,12 @@ class ThresholdVAR:
         return pd.DataFrame(rows, index=["mean", "p5", "p50", "p95"]).T
 
     def regime_probability(self) -> pd.Series:
-        """Posterior probability of regime 2 (``F_{t-d} > Z*``) at each sample date."""
+        """Posterior probability of regime 2 (``F_{t-d} > Z*``) at each date of the
+        estimation span; dates dropped by `exclude` are ``NaN``."""
         self._require_draws()
-        return pd.Series(1.0 - self.draws["e1"].mean(axis=0), index=self.sample_dates,
-                         name="P(regime 2)")
+        p = np.full(len(self.keep), np.nan)
+        p[self.keep] = 1.0 - self.draws["e1"].mean(axis=0)
+        return pd.Series(p, index=self.dates[self.start:], name="P(regime 2)")
 
     def residual_volatility(self, cred: float = 0.68) -> pd.DataFrame:
         """Posterior of the reduced-form shock standard deviations over time.
@@ -692,7 +838,8 @@ class ThresholdVAR:
     def _draw_dict(self, i: int) -> dict:
         d = self.draws
         return dict(B1=d["B1"][i], B2=d["B2"][i], S1=d["S1"][i], S2=d["S2"][i],
-                    tar=d["tar"][i], delay=d["delay"][i], e1=d["e1"][i], y=d["y"])
+                    tar=d["tar"][i], delay=d["delay"][i], e1=d["e1"][i], y=d["y"],
+                    pos=d["pos"], kept=d["kept"])
 
     def compute_irfs(self, shock: Union[str, List[str]] = "level", reps: int = 25,
                      n_draws: Optional[int] = 200, scale: float = 1.0, n_jobs: int = -1,

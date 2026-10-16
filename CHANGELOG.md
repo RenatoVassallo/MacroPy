@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `ThresholdVAR` COVID treatment with the `BayesianVAR` arguments: `covid_mode`
+  (`"lenza-primiceri"` or `"dummies"`), `covid_window`, `covid_scales`,
+  `covid_n_free`, plus `covid_drop_lags`. Lenza-Primiceri scales divide the
+  window rows before estimation (exact GLS under the conjugate prior, Jacobian
+  in `log_marginal_likelihood`) and are estimated, unless given, by empirical
+  Bayes on the linear VAR with the same dummy prior, so they are chosen before
+  any regime is looked at. `"dummies"` drops the window rows from the
+  likelihood (one dummy per observation with a diffuse prior) and, by default,
+  the `lags` rows after the window whose regressors contain the outliers; the
+  lags are still built on the full data, `regime_probability` is `NaN` on the
+  dropped dates and GIRF histories never straddle a hole. Meant for the
+  pandemic quarters in growth-rate systems.
+
 ## [0.3.0] - 2026-10-16
 
 Minor-version bump: two new model classes, `TimeVaryingVAR` (Chan &

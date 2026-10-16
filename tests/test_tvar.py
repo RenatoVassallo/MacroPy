@@ -322,3 +322,60 @@ def test_recursive_scores_and_comparison():
     m.sample_posterior(show_progress=False)
     with pytest.raises(ValueError):
         m.log_predictive_score(df.iloc[-5:])               # overlaps the sample
+
+
+def test_covid_dummies_drop_rows_and_keep_the_timing():
+    df, _ = _data()
+    window = (df.index[150], df.index[155])
+    m = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=200, seed=1,
+                     covid_mode="dummies", covid_window=window)
+    assert m.T == len(df) - m.start - 7                 # six rows plus the one whose lag is in the window
+    assert list(m.covid_dates) == list(df.index[150:156])
+    m.sample_posterior(show_progress=False)
+    p = m.regime_probability()
+    assert p.index.equals(df.index[m.start:])
+    dropped = p.index[p.isna()]
+    assert dropped[0] == window[0] and len(dropped) == 7
+    assert len(m.sample_dates) == m.T and m.draws["e1"].shape[1] == m.T
+    irf = m.compute_irfs(n_draws=5, reps=2, show_progress=False)
+    assert irf["regime1"]["level"].shape[0] == 5
+    assert np.isfinite(m.log_marginal_likelihood()).all()
+    keep_lags = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=200, seed=1,
+                             covid_mode="dummies", covid_window=window, covid_drop_lags=False)
+    assert keep_lags.T == m.T + 1
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=200, covid_mode="dummies",
+                     covid_window=("2030-01-01", "2030-06-01"))
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=200, covid_mode="dummies")
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=200, covid_mode="whatever",
+                     covid_window=window)
+
+
+def test_lenza_primiceri_scales_are_exact_gls_weights():
+    df, _ = _data(T=200)
+    window = (df.index[100], df.index[102])
+    base = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=2)
+    base.sample_posterior(show_progress=False)
+    ones = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=2,
+                        covid_mode="lenza-primiceri", covid_window=window, covid_scales=1.0)
+    ones.sample_posterior(show_progress=False)
+    np.testing.assert_allclose(ones.draws["tar"], base.draws["tar"])
+    pd.testing.assert_series_equal(ones.log_marginal_likelihood(), base.log_marginal_likelihood())
+    assert ones.T == base.T and len(ones.sample_dates) == base.T
+    # an injected outlier gets a scale well above one, estimated before any regime is looked at
+    spiked = df.copy()
+    spiked.iloc[100:103] += np.array([[8.0, -6.0]]) * np.array([[1.0], [0.5], [0.2]])
+    est = ThresholdVAR(spiked, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=2,
+                       covid_mode="lenza-primiceri", covid_window=window, covid_n_free=3)
+    assert est.covid_scales.shape == (3,) and est.covid_scales[0] > 2.0
+    assert np.all(est.covid_scales >= 1.0) and np.all(est.weights <= 1.0)
+    est.sample_posterior(show_progress=False)
+    assert np.isfinite(est.log_marginal_likelihood()).all()
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=100, covid_mode="lenza-primiceri",
+                     covid_window=window, covid_scales=[0.5, 1.0, 1.0])
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=100, covid_mode="lenza-primiceri",
+                     covid_window=window, covid_scales=[2.0, 1.0])
