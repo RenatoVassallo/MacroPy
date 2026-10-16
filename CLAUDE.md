@@ -17,6 +17,20 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
 - `src/MacroPy/tvarsv.py` — `ThresholdVARSV`: Alessandri & Mumtaz (2019)
   threshold VAR with stochastic volatility; GIRFs by regime; plots in
   `plots_tvarsv.py`.
+- `src/MacroPy/tvar.py` — `ThresholdVAR`: Alessandri & Mumtaz (2017) TVAR
+  without SV (regime-specific `Sigma_i`), same API as `ThresholdVARSV`.
+  Exact posterior, not Gibbs: closed-form marginal likelihood of every split
+  `(d, Z*)` under the conjugate dummy prior (`split_posterior`), then iid NIW
+  draws with exact rejection of unstable regimes. The authors' RW-Metropolis
+  threshold step sticks to its starting mode on these models.
+  `log_marginal_likelihood` (TVAR vs linear VAR). Comparison helpers
+  `compare_threshold_models` and `plot_{regime,irf,volatility}_comparison`
+  (in `plots_tvarsv.py`); both classes have `residual_volatility` and
+  `log_predictive_score` (simulated paths, Gaussian last step);
+  `recursive_log_scores` / `compare_log_scores` (Amisano-Giacomini) /
+  `plot_log_scores` for out-of-sample comparisons. Threshold models start the
+  sample at `max(lags + training, max_delay)`. Tutorial:
+  `tutorial_thresholdvar.ipynb` (about 3 min to run).
 - `src/MacroPy/tvpvar.py` — `TimeVaryingVAR`: Chan & Eisenstat (2018) TVP-VARs
   with SV (`model=` C, C-SV, TVP, TVP-SV, TVP-R1/R2/R3-SV). Banded precision
   sampler (block-tridiagonal state precision in LAPACK band storage), KSC

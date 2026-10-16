@@ -54,6 +54,7 @@ import pandas as pd
 from tqdm import tqdm
 from IPython.display import display
 from numpy.linalg import inv, eigvals, lstsq, solve
+from scipy.special import logsumexp
 
 from .summary import generate_tvarsv_summary
 
@@ -163,9 +164,9 @@ def _create_dummies(lamda: float, tau: float, delta: np.ndarray, epsilon: float,
     return yd1, xd1
 
 
-def _get_dummies(lamdaP: float, tauP: float, epsilonP: float, Y: np.ndarray,
-                 L: int, ph: int, epsilonH: float, rw: bool):
-    """Set up the dummy prior (``getdummiesSS.m``): AR(1) persistence and scale."""
+def _ar1_moments(Y: np.ndarray, rw: bool):
+    """Sample means, AR(1) residual standard deviations and AR(1) coefficients
+    (capped at one; all ones when ``rw``) that scale the dummy prior."""
     n = Y.shape[1]
     muP = Y.mean(axis=0)
     sigmaP = np.zeros(n)
@@ -179,6 +180,14 @@ def _get_dummies(lamdaP: float, tauP: float, epsilonP: float, Y: np.ndarray,
         sigmaP[i] = np.sqrt(et @ et / yt.shape[0])
     if rw:
         deltaP = np.ones(n)
+    return muP, sigmaP, deltaP
+
+
+def _get_dummies(lamdaP: float, tauP: float, epsilonP: float, Y: np.ndarray,
+                 L: int, ph: int, epsilonH: float, rw: bool):
+    """Set up the dummy prior (``getdummiesSS.m``): AR(1) persistence and scale."""
+    n = Y.shape[1]
+    muP, sigmaP, deltaP = _ar1_moments(Y, rw)
     return _create_dummies(lamdaP, tauP, deltaP, epsilonP, L, muP, sigmaP, n, ph, epsilonH)
 
 
@@ -407,6 +416,13 @@ def _build_regressors(data: np.ndarray, L: int):
     return X
 
 
+def _sample_start(lags: int, training: int, max_delay: int) -> int:
+    """First estimation observation: after the lags and the training sample, and
+    late enough that ``F_{t-d}`` exists for every delay, so all delays are
+    evaluated on the same observations."""
+    return max(lags + training, max_delay)
+
+
 def _threshold_series(data: np.ndarray, tarvar: int, d: int, start: int):
     """Threshold variable lagged by ``d`` aligned to the estimation sample."""
     f = data[:, tarvar]
@@ -597,7 +613,7 @@ def _run_chain(seed: int, cfg: dict, show_progress: bool = False) -> dict:
     ncrit = NL + EX
 
     # --- estimation sample: drop L lags and T0 training observations ---------
-    start = L + T0
+    start = cfg["start"]
     X_full = _build_regressors(data, L)
     y = data[start:, :]
     x = X_full[start:, :]
@@ -764,7 +780,7 @@ def _run_chain(seed: int, cfg: dict, show_progress: bool = False) -> dict:
             st_tar[stored] = tar
             st_delay[stored] = cur_delay
             st_lam[stored] = lam
-            st_e1[stored] = e1
+            st_e1[stored] = Ystar_all[cur_delay] <= tar   # implied by the stored draw
             stored += 1
         if show_progress:
             it.set_postfix(tar=f"{tar:.3f}", d=cur_delay, acc=f"{arate:.2f}")
@@ -912,6 +928,94 @@ def _girf_draw(draw: dict, shocks: List[str], reps: int, scale: float, hor: int,
 
 
 # ===========================================================================
+# Predictive densities (log scores)
+# ===========================================================================
+
+_LOG2PI = float(np.log(2.0 * np.pi))
+
+
+def _gaussian_log_scores(e: np.ndarray, C: np.ndarray) -> np.ndarray:
+    """Joint and per-variable Gaussian log densities of ``e`` (``(P, N)``) when
+    each row's covariance has the lower Cholesky factor ``C[p]``; ``(P, 1 + N)``."""
+    N = e.shape[1]
+    z = np.linalg.solve(C, e[..., None])[..., 0]
+    logdet = 2.0 * np.log(np.abs(np.diagonal(C, axis1=1, axis2=2))).sum(axis=1)
+    joint = -0.5 * (N * _LOG2PI + logdet + (z * z).sum(axis=1))
+    var = (C * C).sum(axis=2)
+    marginal = -0.5 * (_LOG2PI + np.log(var) + e * e / var)
+    return np.column_stack([joint, marginal])
+
+
+def _log_predictive_score(model, simulate, future, horizons, n_draws: int, reps: int) -> pd.DataFrame:
+    """Shared body of ``log_predictive_score`` for the threshold models.
+
+    ``simulate(sel, target, horizons, reps, rng)`` returns ``{h: (P, 1 + N)}``
+    log densities of the realised ``target[h - 1]``, one per simulated path;
+    the predictive density is their average.
+    """
+    model._require_draws()
+    horizons = sorted({int(h) for h in horizons})
+    if horizons[0] < 1:
+        raise ValueError("Horizons must be at least 1.")
+    if not isinstance(future, pd.DataFrame):
+        raise ValueError("`future` must be a DataFrame with the model's columns.")
+    if len(future) and future.index[0] <= model.dates[-1]:
+        raise ValueError("`future` must start after the last observation of the model's sample.")
+    target = np.full((horizons[-1], model.N), np.nan)
+    values = future[model.names].to_numpy(dtype=float)[:horizons[-1]]
+    target[:len(values)] = values
+    total = model.draws["tar"].shape[0]
+    sel = (np.arange(total) if n_draws is None or n_draws >= total
+           else np.linspace(0, total - 1, n_draws).astype(int))
+    rng = np.random.default_rng([model.seed if model.seed is not None else 12345, 99])
+    logp = simulate(sel, target, horizons, reps, rng)
+    rows = {h: (logsumexp(logp[h], axis=0) - np.log(logp[h].shape[0]) if h in logp
+                else np.full(model.N + 1, np.nan)) for h in horizons}
+    return pd.DataFrame.from_dict(rows, orient="index", columns=["joint", *model.names]) \
+        .rename_axis("horizon")
+
+
+def _tvarsv_path_scores(d: dict, sel: np.ndarray, target: np.ndarray, horizons: list,
+                        reps: int, L: int, LH: int, tarvar: int,
+                        rng: np.random.Generator) -> dict:
+    """Simulated predictive log densities for :class:`ThresholdVARSV`.
+
+    Paths start from each draw's last observations and log volatilities. At
+    every step ``ln lambda`` moves first (it enters the mean), then the
+    regime follows from ``F_{t-d}``; given the path, ``y_{t+h}`` is Gaussian,
+    and its density at the realised value is recorded before the path
+    continues with a random draw (a Rao-Blackwellised estimate).
+    """
+    idx = np.repeat(sel, reps)
+    P, (H, N) = idx.size, target.shape
+    B1, B2 = d["B1"][idx], d["B2"][idx]
+    ia1, ia2 = d["iamat1"][idx], d["iamat2"][idx]
+    sqrt_s = np.sqrt(d["Sbig"][idx])
+    F, sq, mu = d["F"][idx], np.sqrt(d["Q"][idx]), d["mu"][idx]
+    tar, delay = d["tar"][idx], d["delay"][idx].astype(int)
+    pre = max(L, LH + 1, int(delay.max()))
+    rows = np.arange(P)
+    ybuf = np.repeat(d["y"][None, -pre:], P, axis=0)                 # circular buffers
+    hbuf = np.log(d["lam"][idx][:, -pre:])
+    out = {}
+    for h in range(1, H + 1):
+        tau = pre + h - 1
+        hnew = mu + F * hbuf[:, (tau - 1) % pre] + sq * rng.standard_normal(P)
+        hbuf[:, tau % pre] = hnew
+        xrow = np.concatenate([ybuf[:, (tau - j) % pre] for j in range(1, L + 1)]
+                              + [hbuf[:, [(tau - c) % pre for c in range(LH + 1)]],
+                                 np.ones((P, 1))], axis=1)
+        low = ybuf[rows, (tau - delay) % pre, tarvar] <= tar
+        mean = np.where(low[:, None], np.einsum("pk,pkn->pn", xrow, B1),
+                        np.einsum("pk,pkn->pn", xrow, B2))
+        C = np.where(low[:, None, None], ia1, ia2) * (sqrt_s * np.exp(0.5 * hnew)[:, None])[:, None, :]
+        if h in horizons and np.isfinite(target[h - 1]).all():
+            out[h] = _gaussian_log_scores(target[h - 1] - mean, C)
+        ybuf[:, tau % pre] = mean + np.einsum("pij,pj->pi", C, rng.standard_normal((P, N)))
+    return out
+
+
+# ===========================================================================
 # Public class
 # ===========================================================================
 
@@ -933,7 +1037,11 @@ class ThresholdVARSV:
     max_delay : int, default 12
         Upper bound for the threshold delay ``d``, sampled from its posterior.
     training : int, default 20
-        Observations reserved to initialise the stochastic volatility.
+        Observations dropped at the start of the sample, after the lags (the
+        authors' training sample; the volatility starting values are computed
+        on the estimation sample). The estimation sample starts at
+        ``max(lags + training, max_delay)``, so every delay is evaluated on the
+        same observations.
     post_draws : int, default 5000
         Total number of Gibbs draws *including* burn-in (same convention as
         ``BayesianVAR``).
@@ -968,6 +1076,9 @@ class ThresholdVARSV:
     >>> irf = model.compute_irfs(shock="uncertainty")
     >>> model.plot_irfs(shock="uncertainty")
     """
+
+    #: Label used by the comparison helpers.
+    specification = "TVAR-SV"
 
     def __init__(
         self,
@@ -1033,7 +1144,8 @@ class ThresholdVARSV:
         self.prior_params = defaults
 
         # sample-size bookkeeping (number of usable observations)
-        self.T = self.data.shape[0] - lags - training
+        self.start = _sample_start(lags, training, max_delay)
+        self.T = self.data.shape[0] - self.start
         self.k = self.N * lags + self.EX
         self.draws: Optional[dict] = None
 
@@ -1042,7 +1154,7 @@ class ThresholdVARSV:
         cfg = dict(
             data=self.data, L=self.lags, LH=self.vol_lags, N=self.N, EX=self.EX,
             T0=self.training, tarvar=self.tarvar, max_delay=self.max_delay,
-            n_total=self.post_draws, n_burn=self.burnin,
+            n_total=self.post_draws, n_burn=self.burnin, start=self.start,
             tar_prior_mean=self.threshold_prior_mean,
         )
         cfg.update(self.prior_params)
@@ -1132,7 +1244,7 @@ class ThresholdVARSV:
         """
         self._require_draws()
         prob = 1.0 - self.draws["e1"].mean(axis=0)  # P(regime 2) = P(F_{t-d} > Z*)
-        idx = self.dates[self.lags + self.training:]
+        idx = self.sample_dates
         return pd.Series(prob, index=idx, name="P(regime 2)")
 
     def volatility_path(self, cred: float = 0.68) -> pd.DataFrame:
@@ -1142,8 +1254,67 @@ class ThresholdVARSV:
         lo = (1 - cred) / 2
         med = np.median(lam, axis=0)
         band = np.percentile(lam, [100 * lo, 100 * (1 - lo)], axis=0)
-        idx = self.dates[self.lags + self.training:]
+        idx = self.sample_dates
         return pd.DataFrame({"median": med, "lower": band[0], "upper": band[1]}, index=idx)
+
+    def residual_volatility(self, cred: float = 0.68) -> pd.DataFrame:
+        """Posterior of the reduced-form shock standard deviations over time.
+
+        ``sqrt(diag Omega_{S_t,t})`` with ``Omega_{i,t} = A_i^{-1} lambda_t
+        diag(s) A_i^{-1'}``: it moves with the volatility factor and with the
+        regime. :meth:`ThresholdVAR.residual_volatility` returns the same
+        quantity for the model without stochastic volatility.
+
+        Returns
+        -------
+        pd.DataFrame
+            Indexed by date, columns ``(variable, "median" | "lower" | "upper")``.
+        """
+        from .tvar import _band_frame
+        self._require_draws()
+        d = self.draws
+        # diag(A^-1 diag(s) A^-1') per draw and regime, then scaled by lambda_t
+        v1 = np.einsum("njk,nk->nj", d["iamat1"] ** 2, d["Sbig"])[:, None, :]
+        v2 = np.einsum("njk,nk->nj", d["iamat2"] ** 2, d["Sbig"])[:, None, :]
+        var = np.where(d["e1"][:, :, None], v1, v2) * d["lam"][:, 1:, None]
+        return _band_frame(np.sqrt(var), self.names, self.sample_dates, cred)
+
+    @property
+    def sample_dates(self) -> pd.DatetimeIndex:
+        """Dates of the estimation sample."""
+        return self.dates[self.start:]
+
+    def log_predictive_score(self, future: pd.DataFrame, horizons=(1,), n_draws: int = 500,
+                             reps: int = 10) -> pd.DataFrame:
+        """Log predictive density of realised data after the end of the sample.
+
+        ``p(y_{T+h} | y_{1:T})`` is estimated by simulation: for ``n_draws``
+        posterior draws and ``reps`` paths each, the volatility, the regimes
+        and the data are simulated to ``T + h - 1``; ``y_{T+h}`` is then
+        Gaussian, and its density at the realised value is averaged over paths.
+        :func:`MacroPy.recursive_log_scores` repeats this over forecast origins.
+
+        Parameters
+        ----------
+        future : pd.DataFrame
+            Observations after the last date of the model's sample (first row
+            ``T + 1``), with the model's columns.
+        horizons : sequence of int, default (1,)
+        n_draws : int, default 500
+            Posterior draws used (evenly spaced); ``None`` uses all.
+        reps : int, default 10
+            Simulated paths per draw (only matters for ``h > 1``).
+
+        Returns
+        -------
+        pd.DataFrame
+            Index ``horizon``; columns ``joint`` (all variables) and one per
+            variable (marginal density). NaN where ``future`` has no value.
+        """
+        def simulate(sel, target, horizons, reps, rng):
+            return _tvarsv_path_scores(self.draws, sel, target, horizons, reps, self.lags,
+                                       self.vol_lags, self.tarvar, rng)
+        return _log_predictive_score(self, simulate, future, horizons, n_draws, reps)
 
     def _require_draws(self):
         if self.draws is None:

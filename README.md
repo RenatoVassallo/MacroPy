@@ -23,7 +23,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 ✅ Structural impulse response functions and Forecast Error Variance Decomposition  
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
-✅ Threshold VAR with stochastic volatility and uncertainty shocks (Alessandri & Mumtaz, 2019)  
+✅ Threshold VARs with regime-specific covariances (exact posterior) or with stochastic volatility and uncertainty shocks, compared side by side and by out-of-sample log scores (Alessandri & Mumtaz, 2017, 2019)  
 ✅ Time-varying parameter VARs with stochastic volatility, compared by marginal likelihood and DIC (Chan & Eisenstat, 2018)  
 ✅ Trend-cycle decomposition: HP filter, Clark UC by MLE, and Bayesian UC with COVID variance scales (Grant & Chan, 2017; Lenza & Primiceri, 2022)  
 ✅ Publication-ready matplotlib figures in one consistent MacroPy style, for notebooks, papers and slides  
@@ -48,7 +48,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.2.0/macropy-0.2.0-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.3.0/macropy-0.3.0-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -86,7 +86,7 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 - ⚓ [`tutorial_bvar_socdio.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bvar_socdio.ipynb): Sum-of-coefficients and dummy-initial-observation priors, with a pseudo out-of-sample conditional forecasting exercise  
 - 🏗️ [`tutorial_bpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_bpvar.ipynb): Hierarchical Bayesian Panel VAR  
 - 📉 [`tutorial_localprojections.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_localprojections.ipynb): Smooth Local Projections (Barnichon & Brownlees, 2019)  
-- ⛓️ [`tutorial_tvarsv.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvarsv.ipynb): Threshold VAR-SV and uncertainty shocks (Alessandri & Mumtaz, 2019)
+- ⛓️ [`tutorial_thresholdvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_thresholdvar.ipynb): Threshold VARs with and without stochastic volatility (Alessandri & Mumtaz, 2017, 2019): regimes, volatility, and financial and uncertainty shocks by regime
 - 🕰️ [`tutorial_tvpvar.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_tvpvar.ipynb): Time-varying parameter VARs with stochastic volatility on Peruvian data: IRFs by date and in 3D, FEVD over time, historical decomposition, fan charts, and seven specifications compared by marginal likelihood and DIC (Chan & Eisenstat, 2018)
 - 📐 [`tutorial_uc_gdp.ipynb`](https://github.com/RenatoVassallo/MacroPy/blob/main/tutorials/tutorial_uc_gdp.ipynb): Trend-cycle decomposition ladder on US GDP, from the HP filter to a Bayesian UC model with COVID variance scales
 
@@ -96,5 +96,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.2.0.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.0.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

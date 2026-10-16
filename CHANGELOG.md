@@ -4,9 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-16
 
-### Added
+Minor-version bump: two new model classes, `TimeVaryingVAR` (Chan &
+Eisenstat, 2018) and `ThresholdVAR` (Alessandri & Mumtaz, 2017, with an exact
+posterior sampler); comparison tools and density forecasts for the threshold
+VARs; and one MacroPy figure style with an explicit opt-in (`set_style`).
+`ClassicVAR.forecast` and `ClassicVAR.run_full_analysis` are removed (they
+always failed). `ThresholdVARSV` regime probabilities and GIRFs change
+slightly (see Fixed). `tutorial_tvarsv.ipynb` is replaced by
+`tutorial_thresholdvar.ipynb`.
+
+### Added (time-varying parameter VARs)
 - **`TimeVaryingVAR`**: time-varying parameter VARs with stochastic volatility,
   a port of the replication code of Chan & Eisenstat (2018, JAE). One class
   covers the paper's seven specifications (`model=`): `C`, `C-SV`, `TVP`,
@@ -39,6 +48,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tutorials/tutorial_tvpvar.ipynb` (Peru: inflation, GDP growth, interbank
   rate) and `tests/test_tvpvar.py`.
 
+### Added (threshold VARs)
+- **`ThresholdVAR`**: the threshold VAR of Alessandri & Mumtaz (2017, RED),
+  with regime-specific coefficients and covariance matrices: `ThresholdVARSV`
+  without the stochastic-volatility block, with the same constructor, methods
+  and output layouts, so both can be estimated on the same sample and
+  compared. GIRFs by regime to every Cholesky shock (common random numbers);
+  `irf_1std=0` gives unit shocks, comparable across models.
+- **Exact posterior for `ThresholdVAR`.** Under the dummy-observation
+  (Normal-inverse-Wishart) prior, the marginal likelihood of every admissible
+  regime split `(d, Z*)` is computed in closed form (`split_posterior`); each
+  draw takes `(d, Z*)` from that grid, then independent inverse-Wishart and
+  matrix-normal draws per regime, rejecting draws with an unstable regime. Same
+  target as the authors' Gibbs sampler, whose random-walk step for the
+  threshold stays near its starting mode: on the Alessandri-Mumtaz data,
+  chains from different starting points settled at different `(Z*, d)`.
+  `log_marginal_likelihood()` reports the TVAR against the linear VAR with the
+  same prior.
+- Side-by-side comparison of threshold models (`{label: model}`):
+  `compare_threshold_models`, `plot_regime_comparison`, `plot_irf_comparison`,
+  `plot_volatility_comparison`, and `residual_volatility()` in both classes
+  (posterior of the reduced-form shock standard deviations over time).
+  `generate_tvar_summary`, `TVAR_PRIOR_DEFAULTS`.
+- Density forecasts for both threshold classes: `log_predictive_score(future,
+  horizons)` estimates `log p(y_{T+h} | y_{1:T})` at realised data, jointly
+  and per variable, by simulating regimes, volatility and data to `T + h - 1`
+  and averaging the Gaussian density of the last step (no kernel smoothing).
+  `recursive_log_scores` repeats it over forecast origins on an expanding
+  window (origins in parallel), `compare_log_scores` reports average score
+  differences with Amisano-Giacomini (2007) Newey-West tests that allow for
+  overlapping forecasts, and `plot_log_scores` draws cumulative differences.
+- `tutorials/tutorial_thresholdvar.ipynb` replaces `tutorial_tvarsv.ipynb`:
+  TVAR against TVAR-SV (regimes, volatility, financial shocks) and the
+  uncertainty-shock results of Alessandri & Mumtaz (2019).
+  `tests/test_tvar.py` checks the exact posterior, the marginal likelihood
+  (Chib identity), the GIRFs and the predictive densities against closed
+  forms.
+
 ### Added (figures and style)
 - **One entry point for the MacroPy look.** `set_style(context, font)`,
   `reset_style()` and `style_context()` apply the style to the user's figures
@@ -70,6 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `failed_stability_draws` now counts the last run only.
 - `SmoothLocalProjections.estimate` rejects an unknown `projection_type`
   (anything but `'reg'` used to run the smooth estimator silently).
+- `plot_irfs` (threshold models) accepts `ThresholdVAR` and defaults to the
+  uncertainty shock when it was computed, otherwise to the threshold
+  variable's shock.
 
 ### Removed
 - `ClassicVAR.forecast` and `ClassicVAR.run_full_analysis`: leftovers of an
@@ -85,6 +134,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `DeprecationWarning` on import, a `SyntaxError` under `-W error`).
 - `BayesianVAR.plot_exog_posteriors` documented a plotnine return value; it
   returns matplotlib `(fig, axes)`.
+- `ThresholdVARSV` failed with `max_delay > lags + training`; the estimation
+  sample now starts at `max(lags + training, max_delay)`, so every delay is
+  evaluated on the same observations (unchanged for the default settings).
+- `ThresholdVARSV` stored with each draw the regimes implied by the threshold
+  and delay before that sweep's update, but the threshold and delay after it.
+  The stored regimes (`e1`) now match the stored threshold and delay, which
+  `regime_probability` and the GIRF histories use; the threshold and delay
+  draws themselves are unchanged. The `training` docstring now says that those
+  observations are dropped (the volatility is initialised on the estimation
+  sample).
 
 ### Validation (TimeVaryingVAR)
 - Against the authors' MATLAB code on their US data (1955-2014, p = 2): log

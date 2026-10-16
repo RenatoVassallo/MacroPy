@@ -26,7 +26,8 @@ from .priors import (
     nw_conjugate_moments, nw_log_marginal_likelihood, PRIOR_DEFAULTS, PRIOR_KEYS,
 )
 from .summary import (
-    generate_summary, generate_uc_summary, generate_tvarsv_summary, generate_tvpvar_summary,
+    generate_summary, generate_uc_summary, generate_tvarsv_summary, generate_tvar_summary,
+    generate_tvpvar_summary,
 )
 from .state_space import (
     StateSpaceModel, LocalLinearTrend, ClarkModel, WatsonUC, MLEEstimator, MLEResult,
@@ -47,7 +48,14 @@ from .plots_kalman import (
     plot_posterior_traces,
 )
 from .tvarsv import ThresholdVARSV
-from .plots_tvarsv import plot_regimes, plot_volatility, plot_irfs
+from .tvar import (
+    ThresholdVAR, compare_threshold_models, recursive_log_scores, compare_log_scores,
+    TVAR_PRIOR_DEFAULTS,
+)
+from .plots_tvarsv import (
+    plot_regimes, plot_volatility, plot_irfs, plot_regime_comparison, plot_irf_comparison,
+    plot_volatility_comparison, plot_log_scores,
+)
 from .tvpvar import TimeVaryingVAR, compare_tvpvar, TVP_PRIOR_DEFAULTS
 from .plots_tvpvar import (
     plot_tvp_volatility, plot_tvp_coefficients, plot_tvp_irfs, plot_irf_surface, plot_irf_over_time,
@@ -71,7 +79,7 @@ __all__ = [
     "DiffusePanelExogenousPrior", "normalize_prior_params", "ar1_residual_std",
     "nw_conjugate_moments", "nw_log_marginal_likelihood", "PRIOR_DEFAULTS", "PRIOR_KEYS",
     "generate_summary", "generate_uc_summary", "generate_tvarsv_summary",
-    "generate_tvpvar_summary",
+    "generate_tvar_summary", "generate_tvpvar_summary",
     "StateSpaceModel", "LocalLinearTrend", "ClarkModel", "WatsonUC", "MLEEstimator",
     "MLEResult", "BayesianStateSpace", "BayesianResult", "clark_update_step",
     "build_clark_simple", "build_watson_uc", "watson_gibbs_step", "decomposition_to_frame",
@@ -83,6 +91,9 @@ __all__ = [
     "plot_series_with_trend", "plot_decomposition", "plot_with_bands", "plot_kalman_step",
     "plot_posterior_traces",
     "ThresholdVARSV", "plot_regimes", "plot_volatility", "plot_irfs",
+    "ThresholdVAR", "compare_threshold_models", "recursive_log_scores", "compare_log_scores",
+    "TVAR_PRIOR_DEFAULTS", "plot_regime_comparison", "plot_irf_comparison",
+    "plot_volatility_comparison", "plot_log_scores",
     "TimeVaryingVAR", "compare_tvpvar", "TVP_PRIOR_DEFAULTS", "plot_tvp_volatility",
     "plot_tvp_coefficients",
     "plot_tvp_irfs", "plot_irf_surface", "plot_irf_over_time", "plot_fevd_over_time",
