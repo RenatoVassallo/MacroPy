@@ -379,3 +379,61 @@ def test_lenza_primiceri_scales_are_exact_gls_weights():
     with pytest.raises(ValueError):
         ThresholdVAR(df, threshold_var="f", lags=1, post_draws=100, covid_mode="lenza-primiceri",
                      covid_window=window, covid_scales=[2.0, 1.0])
+
+
+def test_fixed_delay_and_threshold():
+    df, _ = _data(T=300, d=2, tar=0.0)
+    m = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=3, post_draws=200, seed=4,
+                     delay=2, threshold=0.0)
+    m.sample_posterior(show_progress=False)
+    assert np.all(m.draws["delay"] == 2) and np.all(m.draws["tar"] == 0.0)
+    assert len(m.split_posterior) == 1 and m.split_posterior["probability"].iloc[0] == 1.0
+    f = df["f"].to_numpy()
+    expected = f[m.start - 2:len(f) - 2] <= 0.0
+    assert np.array_equal(m.draws["e1"][0], expected)
+    lml = m.log_marginal_likelihood()
+    assert np.isclose(lml["TVAR"], m.split_posterior["log_ml"].iloc[0])
+    # fixed delay only: the threshold is still estimated, the delay never moves
+    free = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=3, post_draws=200, seed=4, delay=1)
+    free.sample_posterior(show_progress=False)
+    assert np.all(free.draws["delay"] == 1) and np.unique(free.draws["tar"]).size > 1
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, max_delay=3, post_draws=100, delay=4)
+    too_high = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=3, post_draws=100,
+                            threshold=float(f.max()) + 1.0)
+    with pytest.raises(ValueError):
+        too_high.sample_posterior(show_progress=False)
+
+
+def test_prior_sigma_scale_variance():
+    df, _ = _data(T=200)
+    sd = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=5)
+    var = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=5,
+                       prior_params={"sigma_scale": "variance"})
+    y, _, _, p_sd, _ = sd._setup()
+    _, _, _, p_var, _ = var._setup()
+    _, s, _ = tv._ar1_moments(y, False)
+    np.testing.assert_allclose(np.diag(p_sd.yd[len(s) * 1:len(s) * 2]), s)          # covariance block
+    np.testing.assert_allclose(np.diag(p_var.yd[len(s) * 1:len(s) * 2]), s ** 2)
+    with pytest.raises(ValueError):
+        ThresholdVAR(df, threshold_var="f", lags=1, post_draws=100, prior_params={"sigma_scale": "x"})
+
+
+def test_girfs_from_chosen_histories():
+    df, _ = _data(T=250, d=1, tar=0.0)
+    m = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=1, post_draws=60, hor=6, seed=3,
+                     delay=1, threshold=0.0)
+    m.sample_posterior(show_progress=False)
+    by_regime = m.compute_irfs(n_draws=10, reps=3, show_progress=False)
+    e1 = m.draws["e1"][0]
+    same = m.compute_irfs(n_draws=10, reps=3, show_progress=False,
+                          histories={"regime1": e1, "regime2": ~e1})
+    for reg in ("regime1", "regime2"):
+        np.testing.assert_allclose(same[reg]["level"], by_regime[reg]["level"])
+    assert m.irf is by_regime                         # chosen histories do not overwrite self.irf
+    deep = pd.Series(df["f"].shift(1).reindex(m.sample_dates) < -1.0)
+    some = m.compute_irfs(n_draws=5, reps=2, show_progress=False,
+                          histories={"deep": deep, "dates": m.sample_dates[:20]})
+    assert set(some) == {"deep", "dates"} and some["deep"]["level"].shape == (5, 6, 2, 2)
+    with pytest.raises(ValueError):
+        m.compute_irfs(n_draws=2, reps=1, show_progress=False, histories={"none": np.zeros(m.T, bool)})

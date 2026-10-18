@@ -1049,7 +1049,7 @@ class TimeVaryingVAR:
         return self.irf
 
     def compute_fevd(self, hor: Optional[int] = None, plot_fevd: bool = False,
-                     horizon: int = 8, series_titles=None, shock_titles=None,
+                     horizon: Optional[int] = None, series_titles=None, shock_titles=None,
                      title=None) -> dict:
         """
         Time-varying forecast error variance decomposition (posterior mean, %).
@@ -1064,7 +1064,8 @@ class TimeVaryingVAR:
             ``"fevd"`` (T, hor, shock, variable) in percent (for each date,
             the layout of ``BayesianVAR.compute_fevd``) and ``"dates"``. Also
             on ``self.fevd``. ``plot_fevd`` stacks the shares at ``horizon``
-            steps over time (``figures["fevd"]``).
+            steps over time (``figures["fevd"]``; default 20 steps, or ``hor``
+            if shorter). Entry ``[:, k]`` is the ``(k + 1)``-step share.
         """
         self._require_draws()
         hor = self.hor if hor is None else int(hor)

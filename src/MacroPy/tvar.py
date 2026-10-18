@@ -78,6 +78,7 @@ TVAR_PRIOR_DEFAULTS = dict(
     RW=False,           # True: prior mean of own first lag at 1 for every variable
     maxdraws=1000,      # consecutive unstable draws before repeating the previous one
     tarvariance=10.0,   # prior variance of the threshold Z*
+    sigma_scale="sd",   # dummy-prior scale: AR(1) residual "sd" (Banbura et al.) or "variance"
 )
 
 _LOGPI = float(np.log(np.pi))
@@ -268,13 +269,15 @@ def _sample_draws(seed: int, n_keep: int, split: dict, y: np.ndarray, x: np.ndar
           "tar": np.empty(n_keep), "delay": np.empty(n_keep, dtype=int),
           "e1": np.empty((n_keep, T), dtype=bool)}
     prob, sd = split["probability"], np.sqrt(split["tar_var"])
+    fixed_tar = split.get("fixed_tar")
     n_proposed = n_failed = 0
     for j in tqdm(range(n_keep), desc="Sampling Posterior", disable=not show_progress):
         for attempt in range(maxdraws):
             n_proposed += 1
             i = rng.choice(prob.shape[0], p=prob)
             delay = int(split["delay"][i])
-            tar = _draw_threshold(split["lower"][i], split["upper"][i], split["tar_mean"], sd, rng)
+            tar = (fixed_tar if fixed_tar is not None else
+                   _draw_threshold(split["lower"][i], split["upper"][i], split["tar_mean"], sd, rng))
             low = Fstar[delay - 1] <= tar
             B1, S1 = _draw_niw(y[low], x[low], prior, rng)
             B2, S2 = _draw_niw(y[~low], x[~low], prior, rng)
@@ -299,7 +302,7 @@ def _sample_draws(seed: int, n_keep: int, split: dict, y: np.ndarray, x: np.ndar
 
 
 def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
-               tarvar: int, seed: int, irf_1std: int = 1) -> dict:
+               tarvar: int, seed: int, irf_1std: int = 1, groups=None) -> dict:
     """GIRFs to every Cholesky shock for one draw, averaged by regime of origin.
 
     Histories are the sample periods ``t`` in each regime (``F_{t-d}`` at or
@@ -325,7 +328,9 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
         impact.append(cols)
 
     out: dict = {}
-    for r, (reg, mask) in enumerate((("regime1", draw["e1"]), ("regime2", ~draw["e1"]))):
+    if groups is None:                               # histories by regime of origin
+        groups = (("regime1", draw["e1"]), ("regime2", ~draw["e1"]))
+    for r, (reg, mask) in enumerate(groups):
         idx = pos[np.where(mask)[0]]
         idx = idx[idx >= pre - 1]
         idx = idx[[kept[t - pre + 1:t + 1].all() for t in idx]]   # histories inside a hole are skipped
@@ -457,6 +462,14 @@ class ThresholdVAR:
         Under ``"dummies"``, also drop the rows whose lagged regressors fall
         in the window (the ``lags`` observations after it), so that the
         outliers never enter the right-hand side either.
+    delay : int, optional
+        Fix the threshold delay ``d`` instead of estimating it (it must lie in
+        ``1..max_delay``; the sample still starts at ``max_delay``).
+    threshold : float, optional
+        Fix the threshold ``Z*`` (a point-mass prior) instead of estimating
+        it, e.g. 50 for a diffusion index. The split posterior then has one
+        split per delay and ``log_marginal_likelihood`` compares the TVAR at
+        that threshold with the linear VAR.
 
     Notes
     -----
@@ -504,6 +517,8 @@ class ThresholdVAR:
         covid_scales: Optional[Union[float, Sequence[float]]] = None,
         covid_n_free: int = 3,
         covid_drop_lags: bool = True,
+        delay: Optional[int] = None,
+        threshold: Optional[float] = None,
     ):
         if not isinstance(y, pd.DataFrame):
             raise ValueError("`y` must be a pandas DataFrame with a datetime index.")
@@ -511,6 +526,8 @@ class ThresholdVAR:
             raise ValueError("`y` cannot contain missing values.")
         if lags < 1 or max_delay < 1:
             raise ValueError("`lags` and `max_delay` must be at least 1.")
+        if delay is not None and not 1 <= int(delay) <= max_delay:
+            raise ValueError(f"`delay` must be between 1 and max_delay ({max_delay}).")
         if covid_mode not in (None, "lenza-primiceri", "dummies"):
             raise ValueError("covid_mode must be None, 'lenza-primiceri' or 'dummies'.")
         if (covid_mode is None) != (covid_window is None):
@@ -547,6 +564,10 @@ class ThresholdVAR:
             raise ValueError(f"Unknown prior_params {sorted(unknown)}; "
                              f"valid keys are {sorted(TVAR_PRIOR_DEFAULTS)}.")
         self.prior_params = {**TVAR_PRIOR_DEFAULTS, **(prior_params or {})}
+        if self.prior_params["sigma_scale"] not in ("sd", "variance"):
+            raise ValueError("prior_params['sigma_scale'] must be 'sd' or 'variance'.")
+        self.delay = None if delay is None else int(delay)
+        self.threshold = None if threshold is None else float(threshold)
 
         self.EX = 1                                   # constant
         self.k = self.N * lags + self.EX
@@ -593,6 +614,8 @@ class ThresholdVAR:
         """The dummy prior scaled with the moments of ``y`` (weighted rows under scales)."""
         pp = self.prior_params
         mu, sigma, delta = _ar1_moments(y, pp["RW"])
+        if pp["sigma_scale"] == "variance":
+            sigma = sigma ** 2
         return _DummyPrior(*_create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"],
                                             self.lags, mu, sigma, self.N))
 
@@ -666,6 +689,25 @@ class ThresholdVAR:
         """Display a Markdown summary of the specification."""
         display(generate_tvar_summary(self))
 
+    def _restrict_splits(self, sp: pd.DataFrame) -> pd.DataFrame:
+        """Keep the splits allowed by a fixed ``delay`` and/or ``threshold``.
+
+        A fixed threshold is a point-mass prior: one split per delay, with
+        equal prior mass across delays (the uniform prior on ``d``).
+        """
+        if self.delay is not None:
+            sp = sp[sp["delay"] == self.delay]
+        if self.threshold is not None:
+            sp = sp[(sp["lower"] <= self.threshold) & (self.threshold < sp["upper"])].copy()
+            sp["log_prior_mass"] = 0.0
+        if sp.empty:
+            raise ValueError("The fixed `delay`/`threshold` leaves no admissible split: each "
+                             f"regime needs at least {self.k} observations.")
+        sp = sp.reset_index(drop=True)
+        logw = sp["log_prior_mass"] + sp["log_ml"]
+        sp["probability"] = np.exp(logw - logsumexp(logw))
+        return sp
+
     def sample_posterior(self, n_chains: int = 1, n_jobs: int = -1,
                          show_progress: bool = True) -> dict:
         """Draw from the exact posterior.
@@ -698,11 +740,11 @@ class ThresholdVAR:
         """
         y, x, Fstar, prior, tar_mean = self._setup()
         pp = self.prior_params
-        self.split_posterior = _split_posterior(y, x, Fstar, prior, self.k, tar_mean,
-                                                pp["tarvariance"])
+        self.split_posterior = self._restrict_splits(
+            _split_posterior(y, x, Fstar, prior, self.k, tar_mean, pp["tarvariance"]))
         split = {col: self.split_posterior[col].to_numpy()
                  for col in ("delay", "lower", "upper", "probability")}
-        split.update(tar_mean=tar_mean, tar_var=pp["tarvariance"])
+        split.update(tar_mean=tar_mean, tar_var=pp["tarvariance"], fixed_tar=self.threshold)
         n_keep = self.post_draws - self.burnin
 
         base = self.seed if self.seed is not None else np.random.SeedSequence().entropy
@@ -843,7 +885,8 @@ class ThresholdVAR:
 
     def compute_irfs(self, shock: Union[str, List[str]] = "level", reps: int = 25,
                      n_draws: Optional[int] = 200, scale: float = 1.0, n_jobs: int = -1,
-                     show_progress: bool = True) -> dict:
+                     show_progress: bool = True,
+                     histories: Optional[Dict[str, object]] = None) -> dict:
         """Generalized impulse responses by regime of origin (Koop, Pesaran & Potter, 1996).
 
         For each posterior draw, the response is the Monte Carlo mean of a
@@ -866,13 +909,20 @@ class ThresholdVAR:
             shocked variable (``irf_1std=0``).
         n_jobs : int, default -1
             Parallel workers over draws (joblib).
+        histories : dict, optional
+            Average over chosen histories instead of the regimes: ``{label:
+            selection}`` with a boolean mask aligned with ``sample_dates`` or a
+            collection of dates, e.g. the months in which the threshold variable
+            was below 45. The paths still switch regime when the simulated
+            threshold variable crosses ``Z*``.
 
         Returns
         -------
         dict
             ``{"regime1": {"level": array}, "regime2": {...}}`` with arrays of
-            shape ``(n_draws, hor, N, N)`` (draw, horizon, response, shock). Also
-            stored on ``self.irf``.
+            shape ``(n_draws, hor, N, N)`` (draw, horizon, response, shock), or
+            one entry per label of ``histories``. Stored on ``self.irf`` only
+            for the regime split.
         """
         self._require_draws()
         shocks = [shock] if isinstance(shock, str) else list(shock)
@@ -883,21 +933,43 @@ class ThresholdVAR:
         sel = (np.arange(total) if n_draws is None or n_draws >= total
                else np.linspace(0, total - 1, n_draws).astype(int))
         base = self.seed if self.seed is not None else 12345
+        groups = None if histories is None else self._history_groups(histories)
         jobs = [(self._draw_dict(i), reps, scale, self.hor, self.lags, self.N, self.tarvar,
-                 int(base + 1 + j), self.irf_1std) for j, i in enumerate(sel)]
+                 int(base + 1 + j), self.irf_1std, groups) for j, i in enumerate(sel)]
         it = tqdm(jobs, desc="Computing IRFs", disable=not show_progress)
         if _HAS_JOBLIB and n_jobs != 1:
             results = Parallel(n_jobs=n_jobs)(delayed(_girf_draw)(*job) for job in it)
         else:
             results = [_girf_draw(*job) for job in it]
 
-        irf: dict = {"regime1": {}, "regime2": {}}
+        labels = ("regime1", "regime2") if groups is None else [g[0] for g in groups]
+        irf: dict = {reg: {} for reg in labels}
         for reg in irf:
             valid = [r[reg]["level"] for r in results if r[reg] is not None]
             if valid:
                 irf[reg]["level"] = np.stack(valid)
-        self.irf = irf
+        if groups is None:
+            self.irf = irf
         return irf
+
+    def _history_groups(self, histories: Dict[str, object]) -> list:
+        """``[(label, mask over the likelihood rows)]`` from masks or date collections."""
+        dates = self.sample_dates
+        groups = []
+        for label, sel in histories.items():
+            if isinstance(sel, pd.Series) and sel.dtype == bool:
+                mask = sel.reindex(dates, fill_value=False).to_numpy()
+            elif np.asarray(sel).dtype == bool:
+                mask = np.asarray(sel)
+                if mask.shape != (len(dates),):
+                    raise ValueError(f"histories['{label}'] must have one entry per sample date "
+                                     f"({len(dates)}); got {mask.shape}.")
+            else:
+                mask = dates.isin(pd.DatetimeIndex(sel))
+            if not mask.any():
+                raise ValueError(f"histories['{label}'] selects no sample date.")
+            groups.append((str(label), mask))
+        return groups
 
     # ------------------------------------------------------------------
     def plot_regimes(self, **kwargs):

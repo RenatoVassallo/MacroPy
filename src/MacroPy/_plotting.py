@@ -34,6 +34,14 @@ def _facet_grid_shape(n: int, ncol: int = None) -> tuple:
     return (int(math.ceil(n / ncol)), ncol)
 
 
+def _grid_cols(n: int) -> int:
+    """Columns of a balanced grid for ``n`` panels: one row up to three panels,
+    then ``ceil(sqrt(n))`` columns (4 -> 2x2, 5-6 -> 2x3, 7-9 -> 3x3, 10-12 -> 3x4)."""
+    if n <= 3:
+        return max(1, n)
+    return math.ceil(math.sqrt(n))
+
+
 def _panels(n: int, ncol: int, panel=(5.0, 3.0)):
     """Figure with ``n`` panels on a grid of ``ncol`` columns; unused axes are removed."""
     ncol = max(1, min(ncol, n))

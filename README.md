@@ -48,7 +48,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.3.0/macropy-0.3.0-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.3.2/macropy-0.3.2-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -96,5 +96,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.1.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.2.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-18
+
+### Added
+- `TimeVaryingVAR.plot_volatility`, `plot_irfs` and `plot_fevd` place the panels
+  on a balanced grid (one row up to three variables, then `ceil(sqrt(n))`
+  columns: four variables 2x2, five or six 2x3, nine 3x3) and take `ncol=` to
+  fix the number of columns.
+- `ThresholdVAR(delay=..., threshold=...)`: fix the threshold delay and/or the
+  threshold (a point-mass prior, e.g. 50 for a diffusion index) instead of
+  estimating them; the split posterior keeps only the admissible splits and
+  `log_marginal_likelihood` compares the TVAR at that split with the linear VAR.
+- `TVAR_PRIOR_DEFAULTS["sigma_scale"]`: scale the dummy observations with the
+  AR(1) residual standard deviations (`"sd"`, Banbura et al., the default and
+  the previous behaviour) or with the residual variances (`"variance"`).
+- `ThresholdVAR.compute_irfs(histories={label: selection})`: GIRFs averaged
+  over chosen histories (a boolean mask over `sample_dates` or a collection of
+  dates) instead of the two regimes, e.g. by how far the threshold variable is
+  from `Z*`; paths still switch regime along the horizon.
+
+### Changed
+- `TimeVaryingVAR.plot_fevd` / `compute_fevd(plot_fevd=True)` default to the
+  20-step horizon (or the longest computed, if shorter) instead of 8: a long
+  horizon approximates the decomposition of the unconditional variance of the
+  VAR with each date's parameters. Pass `horizon=` for other horizons.
+
+### Fixed
+- `get_macrodata` no longer calls `logging.basicConfig(level=INFO)` at import,
+  which turned on INFO messages of every library in the user's process (e.g.
+  font subsetting when saving PDFs); it now logs through its own logger.
+
+## [0.3.1] - 2026-10-16
+
 ### Added
 - `ThresholdVAR` COVID treatment with the `BayesianVAR` arguments: `covid_mode`
   (`"lenza-primiceri"` or `"dummies"`), `covid_window`, `covid_scales`,

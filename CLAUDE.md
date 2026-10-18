@@ -26,7 +26,9 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   `log_marginal_likelihood` (TVAR vs linear VAR). COVID treatment with the
   `BayesianVAR` arguments (`covid_mode="lenza-primiceri"` scales estimated on
   the linear VAR with the same prior, or `"dummies"` = window rows and the
-  lag rows after it dropped from the likelihood). Comparison helpers
+  lag rows after it dropped from the likelihood); `delay=`/`threshold=` fix
+  them (point-mass prior); `prior_params["sigma_scale"]` = "sd" | "variance".
+  Comparison helpers
   `compare_threshold_models` and `plot_{regime,irf,volatility}_comparison`
   (in `plots_tvarsv.py`); both classes have `residual_volatility` and
   `log_predictive_score` (simulated paths, Gaussian last step);
@@ -41,7 +43,9 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   thinned). IRFs/FEVD/HD date by date with recursive `A_t^{-1} Sigma_t^{1/2}`;
   optional `log_marginal_likelihood` / `dic` on the integrated likelihood
   (validated against the authors' MATLAB, Kalman and particle filters). The
-  TVP posterior can be multimodal: compare seeds. Plots in `plots_tvpvar.py`.
+  TVP posterior can be multimodal: compare seeds. Plots in `plots_tvpvar.py`
+  (volatility, IRF and FEVD panels on a balanced grid, `_plotting._grid_cols`;
+  FEVD plots default to 20 steps).
 - `src/MacroPy/uc.py` — `UCTrendCycle`: UC trend-cycle ladder (HP filter via
   `hp_filter`/`.hp` preset, Clark MLE via `.clark`/`fit_mle`, Bayesian UC by
   Gibbs with precision-based simulation smoother, Lenza-Primiceri COVID

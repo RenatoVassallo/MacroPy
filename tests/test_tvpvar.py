@@ -180,3 +180,31 @@ def test_validation_and_comparison(fitted):
     other = TimeVaryingVAR(_data(), model="C", lags=1, presample=3, progress=False)
     with pytest.raises(ValueError):
         compare_tvpvar({"a": fitted["C"], "b": other})
+
+
+def test_grid_layout_is_balanced():
+    from MacroPy._plotting import _grid_cols
+    shapes = {n: (-(-n // _grid_cols(n)), _grid_cols(n)) for n in (1, 2, 3, 4, 5, 6, 9, 12)}
+    assert shapes == {1: (1, 1), 2: (1, 2), 3: (1, 3), 4: (2, 2), 5: (2, 3), 6: (2, 3),
+                      9: (3, 3), 12: (3, 4)}
+
+
+def test_tvp_plots_use_grid_and_long_fevd_horizon():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    data = pd.concat([_data(n=3), _data(n=3, seed=5).add_suffix("2").iloc[:, :1]], axis=1)
+    m = TimeVaryingVAR(data, model="C-SV", lags=1, post_draws=200, burnin=0.5, seed=3,
+                       progress=False, hor=24)
+    m.sample_posterior()
+    fig, axes = m.plot_volatility()
+    assert len(axes) == 4 and axes[0].get_subplotspec().get_gridspec().get_geometry() == (2, 2)
+    m.compute_irfs(dates=[m.yy_dates[-1]])
+    fig, axes = m.plot_irfs(shock=0)
+    assert axes[0].get_subplotspec().get_gridspec().get_geometry() == (2, 2)
+    m.compute_fevd()
+    fig, axes = m.plot_fevd()
+    assert "20 steps" in fig._suptitle.get_text()
+    fig, axes = m.plot_fevd(ncol=4)
+    assert axes[0].get_subplotspec().get_gridspec().get_geometry() == (1, 4)
+    plt.close("all")

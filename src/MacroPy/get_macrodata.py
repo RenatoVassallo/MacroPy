@@ -9,8 +9,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-# Set up basic logging
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +243,7 @@ def _periods_to_series(payload: dict, code: str) -> pd.Series:
 
     duplicates = s.index.duplicated().sum()
     if duplicates:
-        logging.warning(
+        logger.warning(
             "BCRP returned %d duplicate date(s) for '%s'; keeping the last occurrence.",
             duplicates, code,
         )
@@ -262,7 +261,7 @@ def _build_bcrp_dataframe(
         payload = _fetch_bcrp_json_single(code, start, end, lang, timeout)
         s = _periods_to_series(payload, code)
         if s.empty:
-            logging.warning(
+            logger.warning(
                 "BCRP returned 0 periods for '%s'. Check the code, frequency, and date range.",
                 code,
             )
@@ -390,7 +389,7 @@ def get_bcrp_data(
             df = df.reset_index(drop=True)
 
     except requests.RequestException as e:
-        logging.error("BCRP request failed: %s", e)
+        logger.error("BCRP request failed: %s", e)
         return None
 
     if date_index:

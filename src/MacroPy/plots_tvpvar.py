@@ -28,7 +28,7 @@ from matplotlib.ticker import MaxNLocator
 
 from matplotlib.colors import TwoSlopeNorm
 
-from ._plotting import _bottom_legend, _date_axis, _panels, _save, _stack_colors
+from ._plotting import _bottom_legend, _date_axis, _grid_cols, _panels, _save, _stack_colors
 from .plots_uc import plot_fan_chart
 from .style import PALETTE, colormap, styled
 
@@ -55,12 +55,15 @@ def _require(model, attr: str, method: str):
 
 @styled
 def plot_tvp_volatility(model, cred: float = 0.68, series_titles=None,
-                        title: Optional[str] = None, savepath: Optional[str] = None):
+                        title: Optional[str] = None, savepath: Optional[str] = None,
+                        ncol: Optional[int] = None):
     """Posterior median and band of the structural shock standard deviations
-    ``exp(h_t / 2)``, one panel per equation (flat for constant variances)."""
+    ``exp(h_t / 2)``, one panel per equation (flat for constant variances).
+    Panels sit on a balanced grid (four variables: 2x2, six: 2x3); ``ncol``
+    fixes the number of columns."""
     frame = model.volatility_frame(cred=cred)
     labels = _labels(model, series_titles)
-    fig, axes = _panels(model.n_endo, min(model.n_endo, 3), panel=(4.6, 2.9))
+    fig, axes = _panels(model.n_endo, ncol or _grid_cols(model.n_endo), panel=(4.6, 2.9))
     for ax, name, label in zip(axes, model.names, labels):
         f = frame[name]
         ax.fill_between(f.index, f["lower"], f["upper"], color=PALETTE["band"], alpha=0.25,
@@ -101,13 +104,16 @@ def plot_tvp_coefficients(model, block: str = "impact", cred: float = 0.68,
 @styled
 def plot_tvp_irfs(model, dates: Optional[Sequence] = None, shock: Union[int, str] = -1,
                   cred: Optional[float] = None, series_titles=None, shock_titles=None,
-                  title: Optional[str] = None, savepath: Optional[str] = None):
+                  title: Optional[str] = None, savepath: Optional[str] = None,
+                  ncol: Optional[int] = None):
     """
     Responses of every variable to one structural shock at selected dates:
     posterior median (line) and credible band (shaded), one colour per date.
 
     ``dates`` are any dates of the estimation sample (default: those whose
     draws ``compute_irfs`` stored); ``shock`` an index or a variable name.
+    Panels sit on a balanced grid (four variables: 2x2, six: 2x3); ``ncol``
+    fixes the number of columns.
     """
     _require(model, "irf", "compute_irfs()")
     irf = model.irf
@@ -123,7 +129,7 @@ def plot_tvp_irfs(model, dates: Optional[Sequence] = None, shock: Union[int, str
     lower, upper = irf["bands"][cred]
     hor = irf["median"].shape[1]
     steps = np.arange(hor)
-    fig, axes = _panels(model.n_endo, min(model.n_endo, 3), panel=(4.6, 3.0))
+    fig, axes = _panels(model.n_endo, ncol or _grid_cols(model.n_endo), panel=(4.6, 3.0))
     for i, ax in enumerate(axes):
         for pos, color in zip(positions, colors):
             ax.fill_between(steps, lower[pos, :, i, j], upper[pos, :, i, j], color=color,
@@ -207,13 +213,20 @@ def plot_irf_over_time(model, response: Union[int, str] = 0, shock: Union[int, s
 
 
 @styled
-def plot_fevd_over_time(model, horizon: int = 8, series_titles=None, shock_titles=None,
+def plot_fevd_over_time(model, horizon: Optional[int] = None, series_titles=None, shock_titles=None,
                         title: Optional[str] = None, color_palette=None,
-                        savepath: Optional[str] = None):
+                        savepath: Optional[str] = None, ncol: Optional[int] = None):
     """Share of each shock in the ``horizon``-step forecast error variance of
-    each variable, date by date (stacked areas, posterior mean)."""
+    each variable, date by date (stacked areas, posterior mean).
+
+    The default horizon is 20 steps (or the longest computed, if shorter): a
+    long horizon approximates the decomposition of the unconditional variance
+    of the VAR with each date's parameters. Panels sit on a balanced grid
+    (four variables: 2x2, six: 2x3); ``ncol`` fixes the number of columns."""
     _require(model, "fevd", "compute_fevd()")
     fevd = np.asarray(model.fevd)                              # (T, hor, shock, var)
+    if horizon is None:
+        horizon = min(20, fevd.shape[1])
     if not 1 <= horizon <= fevd.shape[1]:
         raise ValueError(f"horizon must be between 1 and {fevd.shape[1]}.")
     n = model.n_endo
@@ -221,7 +234,7 @@ def plot_fevd_over_time(model, horizon: int = 8, series_titles=None, shock_title
     shocks = list(shock_titles) if shock_titles else [f"Shock {s}" for s in model.names]
     colors = _stack_colors(color_palette, n)
     dates = pd.DatetimeIndex(model.yy_dates)
-    fig, axes = _panels(n, min(n, 3), panel=(4.6, 3.0))
+    fig, axes = _panels(n, ncol or _grid_cols(n), panel=(4.6, 3.0))
     for v, ax in enumerate(axes):
         ax.stackplot(dates, fevd[:, horizon - 1, :, v].T, colors=colors, labels=shocks,
                      alpha=0.9, lw=0)
