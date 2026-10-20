@@ -208,3 +208,68 @@ def test_tvp_plots_use_grid_and_long_fevd_horizon():
     fig, axes = m.plot_fevd(ncol=4)
     assert axes[0].get_subplotspec().get_gridspec().get_geometry() == (1, 4)
     plt.close("all")
+
+
+def _correlated(T=80, seed=0):
+    """A VAR(1) like ``_data`` with contemporaneously correlated shocks, so that the
+    impact variance decomposition is not trivially 0 / 100."""
+    rng = np.random.default_rng(seed)
+    A = 0.5 * np.eye(3) + 0.1 * np.tri(3, k=-1)
+    C = np.array([[1.0, 0.0, 0.0], [0.8, 1.0, 0.0], [0.5, -0.6, 1.0]])
+    y = np.zeros((T, 3))
+    for t in range(1, T):
+        scale = 2.0 if t > T // 2 else 1.0
+        y[t] = 0.3 + y[t - 1] @ A.T + scale * C @ rng.standard_normal(3)
+    idx = pd.date_range("2000-03-01", periods=T, freq="QS-MAR")
+    return pd.DataFrame(y, index=idx, columns=["a", "b", "c"])
+
+
+def test_fevd_does_not_depend_on_irf_1std():
+    """The FEVD always uses one-standard-deviation shocks; irf_1std only scales the IRFs."""
+    fevd, impact = {}, {}
+    for flag in (0, 1):
+        m = TimeVaryingVAR(_correlated(), model="TVP-SV", lags=1, post_draws=200, burnin=0.5,
+                           seed=3, irf_1std=flag, progress=False)
+        m.sample_posterior()
+        fevd[flag] = m.compute_fevd(hor=4)["fevd"]
+        impact[flag] = m.compute_irfs(hor=1)["median"][:, 0]
+    np.testing.assert_allclose(fevd[0], fevd[1])
+    np.testing.assert_allclose(fevd[0].sum(axis=2), 100.0)       # (T, hor, shock, variable)
+    assert np.abs(fevd[0][:, 0, 0, 1]).max() > 5                 # a non-trivial impact split
+    assert not np.allclose(impact[0], impact[1])                 # the IRFs do depend on it
+    np.testing.assert_allclose(np.diagonal(impact[0], axis1=1, axis2=2), 1.0)
+    one_sd = m._irf_at(10, 2, one_sd=True)
+    assert m.irf_1std == 1 and np.array_equal(one_sd, m._irf_at(10, 2))
+    assert not np.allclose(one_sd, m._irf_at(10, 2, one_sd=False))
+
+
+def test_fevd_is_scale_invariant_but_unit_irfs_scale():
+    """Rescaling a variable leaves the impact FEVD unchanged and scales the unit IRFs.
+
+    C-SV with flat priors on the coefficients and initial log-volatilities is
+    scale equivariant, so the posterior itself does not move. TVP-SV is not:
+    its state-innovation priors are in the units of the data (0.01), and
+    multiplying a variable by 100 changes the impact FEVD by tens of points
+    through the prior, not through the decomposition.
+    """
+    df = _correlated()
+    scaled = df.copy()
+    scaled["b"] *= 100.0
+    fits = []
+    for data in (df, scaled):
+        m = TimeVaryingVAR(data, model="C-SV", lags=1, post_draws=300, burnin=0.5, seed=5,
+                           irf_1std=0, progress=False,
+                           prior_params={"coef_var": 1e6, "h0_var": 1e4})
+        m.sample_posterior()
+        fits.append(m)
+    f0, f1 = (m.compute_fevd(hor=3)["fevd"][:, 0] for m in fits)   # impact, (T, shock, variable)
+    assert f0[:, 0, 1].mean() > 20                                 # shock a explains b on impact
+    np.testing.assert_allclose(f0, f1, atol=1.0)                   # Monte Carlo error only
+    i0, i1 = (m.compute_irfs(hor=1)["median"][:, 0] for m in fits)  # unit shocks
+    assert np.median(i1[:, 1, 0] / i0[:, 1, 0]) == pytest.approx(100.0, rel=0.05)   # a -> b
+    assert np.median(i1[:, 2, 1] / i0[:, 2, 1]) == pytest.approx(0.01, rel=0.05)    # b -> c
+
+    def unit_shares(m, t):                                         # the decomposition before the fix
+        th = m._irf_at(t, 1, one_sd=False)[:, 0]
+        return (100.0 * th ** 2 / (th ** 2).sum(axis=2, keepdims=True)).mean(axis=0)
+    assert np.abs(unit_shares(fits[0], 40) - unit_shares(fits[1], 40)).max() > 10

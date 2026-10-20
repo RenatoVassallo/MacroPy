@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   contemporaneous external coefficients in the domestic block; external lags
   use `lamdaP` with the Minnesota cross-variable scaling.
 
+### Fixed
+- `TimeVaryingVAR.compute_fevd` with `irf_1std=0` decomposed the unit-shock
+  responses `Psi_h A_t^{-1}` instead of `Psi_h A_t^{-1} Sigma_t^{1/2}` and
+  returned wrong shares (still summing to 100) without warning. The FEVD now
+  always uses one-standard-deviation shocks and does not depend on `irf_1std`,
+  which only scales `compute_irfs`. `ClassicVAR` and `BayesianVAR` were not
+  affected: their FEVD builds on `Sigma` and its Cholesky factor directly.
+
 ## [0.3.2] - 2026-10-18
 
 ### Added

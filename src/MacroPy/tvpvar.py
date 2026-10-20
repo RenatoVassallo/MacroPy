@@ -966,14 +966,20 @@ class TimeVaryingVAR:
         logvar = self.draws["h"][:, t, :] if self.sv else np.log(self._saved("sig2"))
         return A, B, logvar
 
-    def _irf_at(self, t: int, hor: int) -> np.ndarray:
-        """Recursive IRFs (n_save, hor, variable, shock), parameters fixed at ``t``."""
+    def _irf_at(self, t: int, hor: int, *, one_sd: Optional[bool] = None) -> np.ndarray:
+        """Recursive IRFs (n_save, hor, variable, shock), parameters fixed at ``t``.
+
+        ``one_sd`` sets the impact: ``A_t^{-1} Sigma_t^{1/2}`` (one-standard-
+        deviation shocks) when True, ``A_t^{-1}`` (unit shocks) when False, and
+        ``self.irf_1std`` when None.
+        """
         n, p = self.n_endo, self.lags
         A, B, logvar = self._coef_at(t)
         Ainv = np.linalg.inv(A)
         Phi = np.matmul(Ainv, B[:, :, 1:])                  # (ns, n, n p)
         lagmats = [Phi[:, :, j * n:(j + 1) * n] for j in range(p)]
-        P = Ainv * np.exp(0.5 * logvar)[:, None, :] if self.irf_1std == 1 else Ainv
+        one_sd = self.irf_1std == 1 if one_sd is None else bool(one_sd)
+        P = Ainv * np.exp(0.5 * logvar)[:, None, :] if one_sd else Ainv
         ns = A.shape[0]
         psi = [np.broadcast_to(np.eye(n), (ns, n, n))]
         out = np.empty((ns, hor, n, n))
@@ -1058,6 +1064,12 @@ class TimeVaryingVAR:
         error variance of variable ``i`` uses the date-``t`` IRFs:
         ``sum_{l<h} theta_l[i, j]^2 / sum_{l<h} sum_m theta_l[i, m]^2``.
 
+        The decomposition is only defined for one-standard-deviation shocks,
+        ``theta_l = Psi_l A_t^{-1} Sigma_t^{1/2}``, so it always uses them and
+        does not depend on ``irf_1std`` (which only sets the scale of
+        ``compute_irfs``). Unit shocks would split ``Psi_l A_t^{-1}`` instead,
+        whose columns have different variances, and give wrong shares.
+
         Returns
         -------
         dict
@@ -1073,7 +1085,7 @@ class TimeVaryingVAR:
         out = np.empty((self.T, hor, n, n))
         span = [0] if self._time_invariant() else range(self.T)
         for t in tqdm(span, desc="Computing FEVD", disable=not self.progress):
-            th = self._irf_at(t, hor)
+            th = self._irf_at(t, hor, one_sd=True)          # FEVD needs 1-s.d. shocks
             cum = np.cumsum(th * th, axis=1)                 # (ns, hor, var, shock)
             share = 100.0 * cum / cum.sum(axis=3, keepdims=True)
             out[t] = np.swapaxes(share.mean(axis=0), 1, 2)
