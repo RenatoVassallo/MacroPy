@@ -437,3 +437,274 @@ def test_girfs_from_chosen_histories():
     assert set(some) == {"deep", "dates"} and some["deep"]["level"].shape == (5, 6, 2, 2)
     with pytest.raises(ValueError):
         m.compute_irfs(n_draws=2, reps=1, show_progress=False, histories={"none": np.zeros(m.T, bool)})
+
+
+# ---------------------------------------------------------------------------
+# Block exogeneity (`b_exo`)
+# ---------------------------------------------------------------------------
+
+
+def test_without_b_exo_the_draws_are_unchanged():
+    """`b_exo=None` reproduces, draw for draw, the numbers of MacroPy 0.3.2."""
+    df, _ = _data(T=150)
+    m = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=200, hor=4, seed=3)
+    d = m.sample_posterior(show_progress=False)
+    np.testing.assert_allclose(d["tar"][[0, 50, 99]], [-0.050138330101345385,
+                                                       -0.2557005611480657,
+                                                       0.017269907094165093], rtol=1e-10)
+    assert d["delay"][[0, 50, 99]].tolist() == [2, 2, 2] and "Bx" not in d
+    np.testing.assert_allclose(d["B1"][0], [[0.5215335618891844, 0.03950516659684668],
+                                            [-0.21173968120748057, 0.6521785631871355],
+                                            [-0.03339126801313205, -0.4768032100685702]],
+                               rtol=1e-10)
+    np.testing.assert_allclose(d["S2"][99], [[3.753079686528751, -0.4555890212104205],
+                                             [-0.4555890212104205, 0.8880005960710504]],
+                               rtol=1e-10)
+    lml = m.log_marginal_likelihood()
+    assert list(lml.index) == ["TVAR", "linear VAR", "log Bayes factor"]
+    np.testing.assert_allclose(lml, [-418.92079330648426, -450.1657655041539,
+                                     31.244972197669654], rtol=1e-10)
+    irf = m.compute_irfs(n_draws=5, reps=3, n_jobs=1, show_progress=False)
+    np.testing.assert_allclose(irf["regime1"]["level"][2, 1],
+                               [[0.45014739047055374, -0.15257668362982335],
+                                [0.17515994307895832, 0.38962058910058983]], rtol=1e-9)
+    np.testing.assert_allclose(irf["regime2"]["level"][4, 3],
+                               [[0.10204288501990078, -0.322661555015228],
+                                [-0.05370147017381996, 0.5481038503641812]], rtol=1e-9)
+    future = pd.DataFrame([[0.4, -0.2], [1.0, 0.3]], columns=m.names,
+                          index=pd.date_range(m.dates[-1], periods=3, freq="MS")[1:])
+    lps = m.log_predictive_score(future, horizons=(1, 2), n_draws=20, reps=4)
+    np.testing.assert_allclose(lps.to_numpy(),
+                               [[-3.2522872540946874, -1.0041185944102584, -1.75479323309873],
+                                [-3.3522929043259007, -1.0052027470293297, -2.270322434676929]],
+                               rtol=1e-9)
+
+
+def _open_economy(T=360, seed=0, tar=0.0):
+    """Two external AR(1) variables and a two-regime domestic block driven by them;
+    regime 1 when the last domestic variable, two periods back, is <= ``tar``."""
+    rng = np.random.default_rng(seed)
+    y = np.zeros((T + 50, 4))
+    G = {True: np.array([[0.5, 0.2], [0.0, 0.3]]), False: np.array([[0.1, 0.4], [0.3, 0.0]])}
+    A = {True: np.array([[0.5, 0.1], [0.0, 0.7]]), False: np.array([[0.2, -0.2], [0.1, 0.4]])}
+    for t in range(2, T + 50):
+        x = np.array([[0.6, 0.0], [0.2, 0.5]]) @ y[t - 1, :2] + rng.standard_normal(2)
+        low = y[t - 2, 3] <= tar
+        d = A[low] @ y[t - 1, 2:] + G[low] @ x + (0.5 if low else 1.5) * rng.standard_normal(2)
+        y[t] = np.r_[x, d]
+    idx = pd.date_range("1990-01-01", periods=T, freq="MS")
+    return pd.DataFrame(y[50:], index=idx, columns=["x1", "x2", "d1", "f"])
+
+
+B_EXO = np.array([[0, 0, 1, 1], [0, 0, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]])
+
+
+@pytest.fixture(scope="module")
+def blocked():
+    m = ThresholdVAR(_open_economy(), threshold_var="f", lags=1, max_delay=3, post_draws=600,
+                     hor=6, seed=11, b_exo=B_EXO)
+    m.sample_posterior(show_progress=False)
+    return m
+
+
+def test_block_draws_layout_and_recovery(blocked):
+    m = blocked
+    d = m.draws
+    assert m.n_ext == 2 and m.k == 2 * 1 + 1 + 2 * 2 and m.k_ext == 3
+    assert d["B1"].shape == (300, m.k, 2) and d["S1"].shape == (300, 2, 2)
+    assert d["Bx"].shape == (300, 3, 2) and d["Sx"].shape == (300, 2, 2)
+    np.testing.assert_allclose(d["Bx"].mean(0)[:2].T, [[0.6, 0.0], [0.2, 0.5]], atol=0.08)
+    assert np.mean(d["delay"] == 2) > 0.9
+    gamma1 = d["B1"].mean(0)[3:5].T                    # contemporaneous rows, regime 1
+    np.testing.assert_allclose(gamma1, [[0.5, 0.2], [0.0, 0.3]], atol=0.12)
+    assert np.isfinite(m.split_posterior["log_ml"]).all()
+    assert set(m.threshold_summary().index) == {"threshold (Z*)", "delay (d)"}
+
+
+def test_external_block_marginal_likelihood_is_its_own_dummy_prior(blocked):
+    m = blocked
+    lml = m.log_marginal_likelihood()
+    assert list(lml.index) == ["external block", "domestic block, TVAR", "domestic block, linear",
+                               "TVAR", "linear VAR", "log Bayes factor"]
+    yx = m.data[m.start:, :2]
+    xx = tv._build_regressors(m.data[:, :2], m.lags)[m.start:]
+    mu, s, delta = tv._ar1_moments(yx, False)
+    pp = m.prior_params
+    prior = tv._DummyPrior(*tv._create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"],
+                                               m.lags, mu, s, 2))
+    expected = prior.log_ml(xx.T @ xx, xx.T @ yx, yx.T @ yx, yx.shape[0])
+    assert lml["external block"] == pytest.approx(expected, abs=1e-8)
+    assert lml["log Bayes factor"] == pytest.approx(
+        lml["domestic block, TVAR"] - lml["domestic block, linear"])
+    assert lml["TVAR"] == pytest.approx(lml["external block"] + lml["domestic block, TVAR"])
+    assert lml["log Bayes factor"] > 5                  # the domestic block does switch
+
+
+def test_block_impact_responses(blocked):
+    m = blocked
+    draw = m._draw_dict(0)
+    draw["tar"] = np.inf                                # every path in regime 1
+    draw["e1"] = np.ones_like(draw["e1"])
+    out = tv._girf_draw(draw, reps=2, scale=1.0, hor=2, L=1, N=4, tarvar=3, seed=0)
+    impact = out["regime1"]["level"][0]                 # (response, shock)
+    Cx, C1 = np.linalg.cholesky(draw["Sx"]), np.linalg.cholesky(draw["S1"])
+    gamma = draw["B1"][3:5]                             # (external, domestic)
+    np.testing.assert_allclose(impact[:2, :2], Cx, atol=1e-12)
+    np.testing.assert_allclose(impact[2:, :2], gamma.T @ Cx, atol=1e-12)
+    np.testing.assert_allclose(impact[:2, 2:], 0.0, atol=1e-12)
+    np.testing.assert_allclose(impact[2:, 2:], C1, atol=1e-12)
+    unit = tv._girf_draw(draw, reps=2, scale=10.0, hor=1, L=1, N=4, tarvar=3, seed=0, irf_1std=0)
+    np.testing.assert_allclose(np.diag(unit["regime1"]["level"][0]), 10.0)
+    # one period later the external block moves on its own coefficients only
+    A = draw["Bx"][:2].T
+    np.testing.assert_allclose(out["regime1"]["level"][1, :2, :2], A @ Cx, atol=1e-12)
+
+
+def test_block_model_feeds_every_method(blocked):
+    m = blocked
+    irf = m.compute_irfs(n_draws=6, reps=2, n_jobs=1, show_progress=False)
+    assert irf["regime1"]["level"].shape == (6, 6, 4, 4)
+    deep = m.compute_irfs(n_draws=3, reps=2, n_jobs=1, show_progress=False,
+                          histories={"first": m.sample_dates[:30]})
+    assert deep["first"]["level"].shape == (3, 6, 4, 4)
+    vol = m.residual_volatility()
+    assert vol.shape == (m.T, 12)
+    assert vol[("x1", "median")].nunique() == 1         # the external block has no regimes
+    assert vol[("d1", "median")].nunique() > 1          # the domestic one switches
+    p = m.regime_probability()
+    assert p.between(0, 1).all()
+    table = compare_threshold_models({"block": m})
+    assert table.loc["block", "T"] == m.T
+    future = pd.DataFrame(np.zeros((3, 4)), columns=m.names,
+                          index=pd.date_range(m.dates[-1], periods=4, freq="MS")[1:])
+    lps = m.log_predictive_score(future, horizons=(1, 3), n_draws=20, reps=3)
+    assert np.isfinite(lps.to_numpy()).all()
+    for fig, _ in (plot_regimes(m), plot_irfs(m)):
+        assert fig.axes
+    matplotlib.pyplot.close("all")
+    summary = tv.generate_tvar_summary(m).data
+    assert "Block Exogeneity" in summary and "x1, x2" in summary
+
+
+def test_block_predictive_density_matches_closed_form_in_one_regime(blocked):
+    """One step ahead the joint density is Gaussian with factor [[Cx, 0], [G' Cx, C1]]."""
+    m = ThresholdVAR(_open_economy(T=200), threshold_var="f", lags=1, max_delay=2,
+                     post_draws=40, seed=2, b_exo=B_EXO)
+    m.sample_posterior(show_progress=False)
+    m = _one_draw(m, tar=np.inf)
+    d = {k: (v[0] if isinstance(v, np.ndarray) and v.ndim and v.shape[0] == 1 else v)
+         for k, v in m.draws.items()}
+    yT = d["y"][-1]
+    mx = d["Bx"][:2].T @ yT[:2] + d["Bx"][2]
+    gamma = d["B1"][3:5]
+    md = d["B1"][:2].T @ yT[2:] + d["B1"][2] + gamma.T @ mx + d["B1"][5:7].T @ yT[:2]
+    V = np.block([[d["Sx"], d["Sx"] @ gamma], [gamma.T @ d["Sx"],
+                                               gamma.T @ d["Sx"] @ gamma + d["S1"]]])
+    actual = np.array([[0.3, -0.2, 0.1, 0.4]])
+    out = m.log_predictive_score(_future(m, actual), n_draws=None, reps=1)
+    assert out.loc[1, "joint"] == pytest.approx(
+        multivariate_normal(np.r_[mx, md], V).logpdf(actual[0]), abs=1e-8)
+    assert out.loc[1, "d1"] == pytest.approx(
+        multivariate_normal(md[0], V[2, 2]).logpdf(actual[0, 2]), abs=1e-8)
+
+
+def test_block_options_delay_threshold_training_and_covid():
+    df = _open_economy(T=260)
+    fixed = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=3, post_draws=100, seed=4,
+                         delay=2, threshold=0.0, training=5, b_exo=B_EXO)
+    fixed.sample_posterior(show_progress=False)
+    assert np.all(fixed.draws["delay"] == 2) and np.all(fixed.draws["tar"] == 0.0)
+    assert fixed.start == 6 and len(fixed.split_posterior) == 1
+    window = (df.index[120], df.index[125])
+    dum = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=1,
+                       covid_mode="dummies", covid_window=window, b_exo=B_EXO)
+    dum.sample_posterior(show_progress=False)
+    assert dum.T == len(df) - dum.start - 7 and dum.draws["e1"].shape[1] == dum.T
+    assert np.isfinite(dum.log_marginal_likelihood()).all()
+    ones = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=1,
+                        covid_mode="lenza-primiceri", covid_window=window, covid_scales=1.0,
+                        b_exo=B_EXO)
+    plain = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=1,
+                         b_exo=B_EXO)
+    for m in (ones, plain):
+        m.sample_posterior(show_progress=False)
+    np.testing.assert_allclose(ones.draws["Bx"], plain.draws["Bx"])
+    pd.testing.assert_series_equal(ones.log_marginal_likelihood(), plain.log_marginal_likelihood())
+    lp = ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, post_draws=100, seed=1,
+                      covid_mode="lenza-primiceri", covid_window=window, covid_scales=3.0,
+                      b_exo=B_EXO)
+    lp.sample_posterior(show_progress=False)
+    _, xx, _ = lp._external_setup()
+    y, x, *_ = lp._setup()
+    w = lp.weights[:, None]                             # the same weights in both blocks
+    np.testing.assert_allclose(xx[:, -1:], w)
+    np.testing.assert_allclose(x[:, 2:3], w)
+
+
+def test_invalid_block_masks_raise():
+    df = _open_economy(T=120)
+    bad = [np.ones((3, 3)),                                          # wrong shape
+           np.array([[0, 0, 2, 1]] * 2 + [[0, 0, 0, 0]] * 2),       # not 0/1
+           np.zeros((4, 4)),                                         # no external block
+           np.array([[0, 0, 0, 0], [0, 0, 0, 0], [1, 1, 0, 0], [1, 1, 0, 0]]),   # external last
+           np.array([[0, 1, 1, 1], [1, 0, 1, 1], [0] * 4, [0] * 4]),  # excludes inside the block
+           np.array([[0, 0, 1, 0], [0, 0, 1, 1], [0] * 4, [0] * 4]),  # partial exclusion
+           np.array([[0, 0, 1, 1], [0, 0, 1, 1], [1, 0, 0, 0], [0] * 4])]  # domestic row with ones
+    for mask in bad:
+        with pytest.raises(ValueError, match="b_exo"):
+            ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, b_exo=mask)
+    with pytest.raises(ValueError, match="block-recursive"):
+        ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, b_exo=bad[3])
+    with pytest.raises(ValueError, match="lamda0P"):
+        ThresholdVAR(df, threshold_var="f", lags=1, max_delay=2, b_exo=B_EXO,
+                     prior_params={"lamda0P": 0.0})
+
+
+def _reference_data():
+    """The frozen database of the Sanchez-Vassallo external-shocks project, if available."""
+    import os
+    import sys
+    from pathlib import Path
+    root = Path(os.environ.get("TVAR_SHOCKS_ROOT",
+                               Path(__file__).resolve().parents[2] / "research"
+                               / "tvar_external_shocks"))
+    if not (root / "src" / "tvar_shocks" / "data.py").exists():
+        pytest.skip("research/tvar_external_shocks not available (set TVAR_SHOCKS_ROOT)")
+    sys.path.insert(0, str(root / "src"))
+    cwd = os.getcwd()
+    try:
+        os.chdir(root)
+        from tvar_shocks import data as dbase
+        return dbase.load()
+    finally:
+        os.chdir(cwd)
+
+
+def test_block_tvar_reproduces_the_reference_numbers():
+    """scripts/block_tvar_reference.py (block chn_first, lam0 1): same data, prior and
+    sampler. The draws coincide with the reference's draw for draw (seed 2026); the
+    GIRFs use the reference's seeds, so the pass-throughs differ only through the
+    presample histories the reference also averages over."""
+    ext, dom = ["g_ip_usa", "fed", "g_ip_chn", "g_xpi"], ["g_gdp", "g_cpi", "int", "exp"]
+    df = _reference_data().loc["2002-04-01":"2025-12-01", ext + dom].dropna()
+    b_exo = np.zeros((8, 8), dtype=int)
+    b_exo[:4, 4:] = 1
+    m = ThresholdVAR(df, threshold_var="exp", lags=2, max_delay=6, post_draws=4000, burnin=0.5,
+                     hor=12, irf_1std=0, seed=2026, threshold=50.0, covid_mode="dummies",
+                     covid_window=("2020-01", "2021-06"), covid_drop_lags=True, b_exo=b_exo,
+                     prior_params=dict(lamdaP=0.1, tauP=1.0, epsilonP=1.0, lamda0P=1.0))
+    m.sample_posterior(show_progress=False)
+    assert m.T == 259
+    p_delay = m.split_posterior.groupby("delay")["probability"].sum()
+    assert p_delay.idxmax() == 4 and p_delay[4] > 0.99
+    assert m.stable_share == pytest.approx(0.30, abs=0.01)
+    assert m.log_marginal_likelihood()["log Bayes factor"] == pytest.approx(-33.14, abs=0.01)
+    m.seed = 2025                                      # GIRF seeds 2026 + j, as the reference
+    ig = m.names.index("g_gdp")
+    for shock, scale, expected in (("g_ip_chn", 1.0, (0.24, 0.24)), ("g_xpi", 10.0, (-0.05, 0.22))):
+        k = m.names.index(shock)
+        irf = m.compute_irfs(n_draws=500, reps=20, scale=scale, show_progress=False)
+        for reg, value in zip(("regime1", "regime2"), expected):
+            a = irf[reg]["level"][:, :12, :, k]
+            through = np.median(a[:, :, ig].sum(1) / a[:, :, k].sum(1) * scale)
+            assert through == pytest.approx(value, abs=0.03)

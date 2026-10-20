@@ -329,6 +329,17 @@ u_{i,t} &\sim \mathcal{N}(0, \Sigma_i), \qquad \tilde S_t = 1 \iff F_{t-d} \le Z
 """
 
 
+def _tvar_block_equations():
+    return r"""
+\begin{align*}
+X_t &= c_x + \sum_{j=1}^{P} A_j X_{t-j} + u^x_t, \qquad u^x_t \sim \mathcal{N}(0, \Sigma_x) \\
+D_t &= \Big(c_1 + \sum_{j=1}^{P} B_{1,j} D_{t-j} + \sum_{j=0}^{P} \Gamma_{1,j} X_{t-j} + u_{1,t}\Big)\,\tilde S_t
+ + \Big(c_2 + \sum_{j=1}^{P} B_{2,j} D_{t-j} + \sum_{j=0}^{P} \Gamma_{2,j} X_{t-j} + u_{2,t}\Big)(1-\tilde S_t) \\
+u_{i,t} &\sim \mathcal{N}(0, \Sigma_i), \qquad \tilde S_t = 1 \iff F_{t-d} \le Z^{*}
+\end{align*}
+"""
+
+
 def generate_tvar_summary(settings):
     """
     Structured Markdown summary for :class:`MacroPy.ThresholdVAR`, matching
@@ -341,6 +352,22 @@ def generate_tvar_summary(settings):
     sample_end = settings.dates[-1].date()
     total_draws = settings.post_draws
     pp = settings.prior_params
+    nx = getattr(settings, "n_ext", 0)
+    if nx:
+        nd = settings.N - nx
+        external, domestic = settings.names[:nx], settings.names[nx:]
+        blocks = (f"\n- **Block Exogeneity**: external block (linear BVAR, no regime switch): "
+                  f"{', '.join(map(str, external))}; domestic block (threshold, on its own lags "
+                  f"and on current and lagged external variables): "
+                  f"{', '.join(map(str, domestic))}")
+        params = (f"external block {settings.k_ext * nx} coefficients, 1 covariance matrix; "
+                  f"domestic block {2 * settings.k * nd} coefficients, 2 covariance matrices")
+        prior_extra = (f"; external regressors in the domestic block: contemporaneous "
+                       f"{pp['lamda0P']}, lags {pp['lamdaP']}")
+        equations = _tvar_block_equations()
+    else:
+        blocks, prior_extra, equations = "", "", _tvar_equations()
+        params = f"{2 * settings.k * settings.N} coefficients, 2 covariance matrices"
 
     summary = f"""
 **MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**
@@ -351,19 +378,19 @@ Version {__version__}
 
 **Model Specifications**
 - **Model Type**: Threshold VAR with regime-specific covariances (Alessandri & Mumtaz, 2017)
-- **Endogenous Variables**: {', '.join(map(str, settings.names))}
+- **Endogenous Variables**: {', '.join(map(str, settings.names))}{blocks}
 - **Threshold Variable**: {settings.threshold_name}
 - **Number of Lags (P)**: {settings.lags}
 - **Maximum Threshold Delay**: {settings.max_delay}
 - **Sample Period**: {sample_start} to {sample_end} ({settings.T} observations)
-- **VAR Parameters (both regimes)**: {2 * settings.k * settings.N} coefficients, 2 covariance matrices
+- **VAR Parameters (both regimes)**: {params}
 
 ---
 
 **Bayesian Estimation Settings**
 - **Posterior Simulation**: exact (threshold and delay on the full grid of regime splits, then independent Normal-inverse-Wishart draws)
 - **Regimes**: 2, endogenous threshold and delay
-- **Prior**: dummy observations (tightness {pp["lamdaP"]}, sum of coefficients {pp["tauP"]}, constant {pp["epsilonP"]}); threshold N(mean, {pp["tarvariance"]})
+- **Prior**: dummy observations (tightness {pp["lamdaP"]}, sum of coefficients {pp["tauP"]}, constant {pp["epsilonP"]}{prior_extra}); threshold N(mean, {pp["tarvariance"]})
 - **Total Draws**: {total_draws}
 - **Burn-in**: {settings.burnin} ({settings.burnin / total_draws:.0%})
 
@@ -378,7 +405,7 @@ Version {__version__}
 **Model Equations**
 
 $$
-{_tvar_equations()}
+{equations}
 $$
 """
     return Markdown(summary)

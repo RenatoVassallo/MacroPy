@@ -40,6 +40,13 @@ modes, which a random-walk chain may never leave.
 Generalized impulse responses (Koop, Pesaran & Potter, 1996) are computed by
 Monte Carlo with common random numbers and reported by regime of origin, with
 the same layout as :meth:`ThresholdVARSV.compute_irfs`.
+
+Block exogeneity (``b_exo``) is a hard block structure, because the dummy
+prior is Kronecker: the first ``n_x`` variables form a linear external BVAR
+without regimes, and the domestic block is a threshold regression on its own
+lags, the constant and the current and lagged external variables. The split
+posterior then uses the domestic block only; the rest of the method is
+unchanged.
 """
 from __future__ import annotations
 
@@ -79,9 +86,57 @@ TVAR_PRIOR_DEFAULTS = dict(
     maxdraws=1000,      # consecutive unstable draws before repeating the previous one
     tarvariance=10.0,   # prior variance of the threshold Z*
     sigma_scale="sd",   # dummy-prior scale: AR(1) residual "sd" (Banbura et al.) or "variance"
+    lamda0P=1.0,        # tightness of the contemporaneous external coefficients (`b_exo` only)
 )
 
 _LOGPI = float(np.log(np.pi))
+
+
+def _block_exogeneity(b_exo, N: int) -> int:
+    """Number of external variables of a block-recursive ``b_exo`` mask.
+
+    The conjugate dummy prior has a Kronecker covariance, so a restriction can
+    only remove whole blocks: the external block is the first ``n_x``
+    variables, each of its equations excludes every variable outside the
+    block and none inside it, and the domestic rows exclude nothing.
+    """
+    mask = np.asarray(b_exo)
+    if mask.shape != (N, N) or not np.isin(mask, (0, 1)).all():
+        raise ValueError(f"`b_exo` must be an {N} x {N} array of 0/1.")
+    nx = int(mask.any(axis=1).sum())
+    expected = np.zeros((N, N), dtype=int)
+    expected[:nx, nx:] = 1
+    if nx == 0 or not np.array_equal(mask.astype(int), expected):
+        raise ValueError(
+            "ThresholdVAR's conjugate dummy prior requires a Kronecker covariance; per-equation "
+            "block exogeneity (`b_exo`) is not representable. Only a block-recursive mask is: "
+            "the external variables come first, their equations exclude every variable outside "
+            "the block and none inside it, and the other rows are zero "
+            "(use b_exo=None for the unrestricted model).")
+    return nx
+
+
+def _external_dummies(yd: np.ndarray, xd: np.ndarray, scales: np.ndarray, lags: int,
+                      lamda: float, lamda0: float):
+    """Extend the domestic dummy prior to the external regressors.
+
+    The regressors ``[current, lag 1, ..., lag L]`` of the external variables
+    follow the constant. Each gets one row with ``y = 0`` and
+    ``x = s_j max(l, 1) / lamda_l`` on its own coefficient (``lamda0`` at
+    ``l = 0``), i.e. ``N(0, sigma_i^2 lamda_l^2 / (s_j max(l, 1))^2)`` in
+    equation ``i``: the Minnesota cross-variable shape.
+    """
+    nx = scales.size
+    m = nx * (lags + 1)
+    k0 = xd.shape[1]
+    extra = np.zeros((m, k0 + m))
+    for l in range(lags + 1):
+        lam = lamda0 if l == 0 else lamda
+        for j, s in enumerate(scales):
+            extra[l * nx + j, k0 + l * nx + j] = s * max(l, 1) / lam
+    y = np.vstack([yd, np.zeros((m, yd.shape[1]))])
+    x = np.vstack([np.hstack([xd, np.zeros((xd.shape[0], m))]), extra])
+    return y, x
 
 
 # ===========================================================================
@@ -259,15 +314,28 @@ def _draw_niw(y: np.ndarray, x: np.ndarray, prior: _DummyPrior, rng: np.random.G
 
 def _sample_draws(seed: int, n_keep: int, split: dict, y: np.ndarray, x: np.ndarray,
                   Fstar: np.ndarray, prior: _DummyPrior, L: int, maxdraws: int,
-                  show_progress: bool = False) -> dict:
-    """``n_keep`` independent posterior draws (one block of :meth:`ThresholdVAR.sample_posterior`)."""
+                  show_progress: bool = False, ext: Optional[tuple] = None) -> dict:
+    """``n_keep`` independent posterior draws (one block of :meth:`ThresholdVAR.sample_posterior`).
+
+    ``y, x, prior`` are the threshold regressions. With block exogeneity,
+    ``ext = (y_x, x_x, prior_x)`` is the linear external block, drawn first in
+    every proposal; the stability of the system is that of the external block
+    and of each regime's own (domestic) lags, because the companion matrix is
+    block triangular.
+    """
     rng = np.random.default_rng(seed)
     T, N = y.shape
     k = x.shape[1]
+    own = N * L + 1                                  # own lags and constant
     st = {"B1": np.empty((n_keep, k, N)), "B2": np.empty((n_keep, k, N)),
           "S1": np.empty((n_keep, N, N)), "S2": np.empty((n_keep, N, N)),
           "tar": np.empty(n_keep), "delay": np.empty(n_keep, dtype=int),
           "e1": np.empty((n_keep, T), dtype=bool)}
+    if ext is not None:
+        yx, xx, prior_x = ext
+        nx = yx.shape[1]
+        st.update(Bx=np.empty((n_keep, xx.shape[1], nx)), Sx=np.empty((n_keep, nx, nx)))
+    Bx = Sx = None
     prob, sd = split["probability"], np.sqrt(split["tar_var"])
     fixed_tar = split.get("fixed_tar")
     n_proposed = n_failed = 0
@@ -279,10 +347,14 @@ def _sample_draws(seed: int, n_keep: int, split: dict, y: np.ndarray, x: np.ndar
             tar = (fixed_tar if fixed_tar is not None else
                    _draw_threshold(split["lower"][i], split["upper"][i], split["tar_mean"], sd, rng))
             low = Fstar[delay - 1] <= tar
+            if ext is not None:
+                Bx, Sx = _draw_niw(yx, xx, prior_x, rng)
+                if _stability(Bx.ravel(order="F"), nx, L, 1):
+                    continue
             B1, S1 = _draw_niw(y[low], x[low], prior, rng)
             B2, S2 = _draw_niw(y[~low], x[~low], prior, rng)
-            if not (_stability(B1.ravel(order="F"), N, L, 1)
-                    or _stability(B2.ravel(order="F"), N, L, 1)):
+            if not (_stability(B1[:own].ravel(order="F"), N, L, 1)
+                    or _stability(B2[:own].ravel(order="F"), N, L, 1)):
                 break
         else:                                        # no stable draw: repeat the previous one
             n_failed += 1
@@ -290,8 +362,13 @@ def _sample_draws(seed: int, n_keep: int, split: dict, y: np.ndarray, x: np.ndar
                 for key in st:
                     st[key][j] = st[key][j - 1]
                 continue
+            if ext is not None:
+                raise RuntimeError(f"No stable draw in the first {maxdraws} proposals; "
+                                   "raise prior_params['maxdraws'].")
         st["B1"][j], st["B2"][j], st["S1"][j], st["S2"][j] = B1, B2, S1, S2
         st["tar"][j], st["delay"][j], st["e1"][j] = tar, delay, low
+        if ext is not None:
+            st["Bx"][j], st["Sx"][j] = Bx, Sx
     st.update(n_proposed=n_proposed, n_failed=n_failed)
     return st
 
@@ -311,6 +388,12 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
     innovations (common random numbers): the impact period has no other
     shock, later periods draw ``z ~ N(0, I)`` scaled by the Cholesky factor of
     the regime each path is in.
+
+    With block exogeneity (``draw["Bx"]``), the external block is simulated
+    first with its own Cholesky factor and enters the domestic regressions
+    ``[domestic lags, 1, external now, external lags]``: an external shock
+    reaches the domestic variables on impact through the regime's
+    contemporaneous coefficients, a domestic shock uses the regime's factor.
     """
     B = (draw["B1"], draw["B2"])
     C = (cholesky(draw["S1"]), cholesky(draw["S2"]))
@@ -319,13 +402,28 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
     kept = draw.get("kept", np.ones(y.shape[0], dtype=bool))
     NL = N * L
     pre = max(L, delay)
-    # impact of shock s (row s): column s of the Cholesky factor, unit-normalised if asked
-    impact = []
-    for Ci in C:
+    nx = 0 if draw.get("Bx") is None else draw["Bx"].shape[1]
+    nd = N - nx
+
+    def columns(Ci):
+        """Impact of each shock of a block (row s): column s of the Cholesky factor,
+        unit-normalised if asked."""
         cols = Ci.T * scale
-        if irf_1std != 1:
-            cols = cols / np.diag(Ci)[:, None]
-        impact.append(cols)
+        return cols if irf_1std == 1 else cols / np.diag(Ci)[:, None]
+
+    impact = []
+    if nx == 0:
+        for Ci in C:
+            impact.append(columns(Ci))
+    else:
+        Bx, Cx = draw["Bx"], cholesky(draw["Sx"])
+        imp_x = np.zeros((N + 1, nx))                # rows: baseline, then the N shocks
+        imp_x[1:nx + 1] = columns(Cx)
+        for Ci in C:
+            imp_d = np.zeros((N + 1, nd))
+            imp_d[nx + 1:] = columns(Ci)
+            impact.append(imp_d[:, None, :])
+        imp_x = imp_x[:, None, :]
 
     out: dict = {}
     if groups is None:                               # histories by regime of origin
@@ -345,17 +443,32 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
         means = np.empty((N + 1, hor, N))
         for h in range(hor):
             tau = pre + h
-            xrow = np.concatenate([buf[:, :, (tau - j) % pre, :] for j in range(1, L + 1)],
-                                  axis=2)
             low = buf[:, :, (tau - delay) % pre, tarvar] <= tar
-            if h == 0:
-                shock = [np.vstack([np.zeros((1, N)), imp])[:, None, :] for imp in impact]
+            if nx:
+                lagged = [buf[:, :, (tau - j) % pre, :] for j in range(1, L + 1)]
+                xlags = np.concatenate([g[..., :nx] for g in lagged], axis=2)
+                if h == 0:
+                    ex, shock = imp_x, impact
+                else:
+                    ex = (rng.standard_normal((P, nx)) @ Cx.T)[None]
+                    z = rng.standard_normal((P, nd))
+                    shock = [(z @ Ci.T)[None] for Ci in C]
+                xnew = xlags @ Bx[:nx * L] + Bx[nx * L] + ex
+                Z = np.concatenate([g[..., nx:] for g in lagged]
+                                   + [np.ones(xnew.shape[:2] + (1,)), xnew, xlags], axis=2)
+                dnew = np.where(low[..., None], Z @ B[0] + shock[0], Z @ B[1] + shock[1])
+                new = np.concatenate([xnew, dnew], axis=2)
             else:
-                z = rng.standard_normal((P, N))
-                shock = [(z @ Ci.T)[None] for Ci in C]
-            y1 = xrow @ B[0][:NL] + B[0][NL] + shock[0]
-            y2 = xrow @ B[1][:NL] + B[1][NL] + shock[1]
-            new = np.where(low[..., None], y1, y2)
+                xrow = np.concatenate([buf[:, :, (tau - j) % pre, :] for j in range(1, L + 1)],
+                                      axis=2)
+                if h == 0:
+                    shock = [np.vstack([np.zeros((1, N)), imp])[:, None, :] for imp in impact]
+                else:
+                    z = rng.standard_normal((P, N))
+                    shock = [(z @ Ci.T)[None] for Ci in C]
+                y1 = xrow @ B[0][:NL] + B[0][NL] + shock[0]
+                y2 = xrow @ B[1][:NL] + B[1][NL] + shock[1]
+                new = np.where(low[..., None], y1, y2)
             buf[:, :, tau % pre, :] = new
             means[:, h, :] = new.mean(axis=1)
         out[reg] = {"level": np.transpose(means[1:] - means[0], (1, 2, 0))}  # (hor, resp, shock)
@@ -365,7 +478,14 @@ def _girf_draw(draw: dict, reps: int, scale: float, hor: int, L: int, N: int,
 def _tvar_path_scores(d: dict, sel: np.ndarray, target: np.ndarray, horizons: list,
                       reps: int, L: int, tarvar: int, rng: np.random.Generator) -> dict:
     """Simulated predictive log densities for :class:`ThresholdVAR` (see
-    ``tvarsv._tvarsv_path_scores``): Gaussian at step ``h`` given the path."""
+    ``tvarsv._tvarsv_path_scores``): Gaussian at step ``h`` given the path.
+
+    With block exogeneity the external values ``x`` come first and the
+    domestic ones load on them through ``Gamma0`` (the contemporaneous rows of
+    the regime's coefficients), so given the path the joint density is Gaussian
+    with mean ``[m_x, m_d + Gamma0' m_x]`` and lower Cholesky factor
+    ``[[C_x, 0], [Gamma0' C_x, C_d]]``.
+    """
     idx = np.repeat(sel, reps)
     P, (H, N) = idx.size, target.shape
     B1, B2 = d["B1"][idx], d["B2"][idx]
@@ -374,15 +494,34 @@ def _tvar_path_scores(d: dict, sel: np.ndarray, target: np.ndarray, horizons: li
     pre = max(L, int(delay.max()))
     rows = np.arange(P)
     buf = np.repeat(d["y"][None, -pre:], P, axis=0)                  # circular buffer
+    nx = 0 if d.get("Bx") is None else d["Bx"].shape[2]
+    if nx:
+        Bx, Cx = d["Bx"][idx], cholesky(d["Sx"][idx])
+        nd, c0 = N - nx, (N - nx) * L + 1            # first contemporaneous row
     out = {}
     for h in range(1, H + 1):
         tau = pre + h - 1
-        xrow = np.concatenate([buf[:, (tau - j) % pre] for j in range(1, L + 1)]
-                              + [np.ones((P, 1))], axis=1)
         low = buf[rows, (tau - delay) % pre, tarvar] <= tar
-        mean = np.where(low[:, None], np.einsum("pk,pkn->pn", xrow, B1),
-                        np.einsum("pk,pkn->pn", xrow, B2))
-        C = np.where(low[:, None, None], C1, C2)
+        if nx:
+            lagged = [buf[:, (tau - j) % pre] for j in range(1, L + 1)]
+            xlags = np.concatenate([g[:, :nx] for g in lagged], axis=1)
+            ones = np.ones((P, 1))
+            mx = np.einsum("pk,pkn->pn", np.concatenate([xlags, ones], axis=1), Bx)
+            Z = np.concatenate([g[:, nx:] for g in lagged] + [ones, mx, xlags], axis=1)
+            Bd = np.where(low[:, None, None], B1, B2)
+            gamma = Bd[:, c0:c0 + nx, :]                                # (P, nx, nd)
+            Cd = np.where(low[:, None, None], C1, C2)
+            mean = np.concatenate([mx, np.einsum("pk,pkn->pn", Z, Bd)], axis=1)
+            C = np.zeros((P, N, N))
+            C[:, :nx, :nx] = Cx
+            C[:, nx:, :nx] = np.swapaxes(gamma, 1, 2) @ Cx
+            C[:, nx:, nx:] = Cd
+        else:
+            xrow = np.concatenate([buf[:, (tau - j) % pre] for j in range(1, L + 1)]
+                                  + [np.ones((P, 1))], axis=1)
+            mean = np.where(low[:, None], np.einsum("pk,pkn->pn", xrow, B1),
+                            np.einsum("pk,pkn->pn", xrow, B2))
+            C = np.where(low[:, None, None], C1, C2)
         if h in horizons and np.isfinite(target[h - 1]).all():
             out[h] = _gaussian_log_scores(target[h - 1] - mean, C)
         buf[:, tau % pre] = mean + np.einsum("pij,pj->pi", C, rng.standard_normal((P, N)))
@@ -470,6 +609,29 @@ class ThresholdVAR:
         it, e.g. 50 for a diffusion index. The split posterior then has one
         split per delay and ``log_marginal_likelihood`` compares the TVAR at
         that threshold with the linear VAR.
+    b_exo : np.ndarray, optional
+        Block exogeneity mask with the convention of :class:`BayesianVAR`: an
+        ``N x N`` array of 0/1 where ``b_exo[i, j] = 1`` excludes variable
+        ``j`` from equation ``i``. Unlike :class:`BayesianVAR`, where the
+        restriction is soft (prior variance ``1e-9`` on the excluded lags)
+        and the system stays one VAR, here it is a hard block structure: the
+        conjugate dummy prior has a Kronecker covariance, so per-equation
+        prior variances are not representable and the exact split posterior
+        would be lost. ``b_exo`` must therefore be block recursive: the
+        equations with ones are the external block, they are the first
+        ``n_x`` variables, and each excludes every variable outside the block
+        and none inside it (e.g. ``b_exo[:2, 2:] = 1``); any other mask
+        raises. The external block is then a linear BVAR on its own lags and
+        a constant, with its own dummy prior, posterior and stability check;
+        **it does not switch regime**. The domestic block keeps the threshold
+        structure: regime-specific ``(B_i, Sigma_i)`` on its own lags, the
+        constant and the current and lagged external variables, whose
+        coefficients get one dummy row each (``prior_params["lamda0P"]`` for
+        the contemporaneous ones, ``lamdaP`` for the lags; see
+        :data:`TVAR_PRIOR_DEFAULTS`). The split posterior over ``(d, Z*)``
+        uses the domestic block's marginal likelihood only, since the
+        external block does not depend on the split. :class:`ThresholdVARSV`
+        does not take ``b_exo``.
 
     Notes
     -----
@@ -519,6 +681,7 @@ class ThresholdVAR:
         covid_drop_lags: bool = True,
         delay: Optional[int] = None,
         threshold: Optional[float] = None,
+        b_exo: Optional[np.ndarray] = None,
     ):
         if not isinstance(y, pd.DataFrame):
             raise ValueError("`y` must be a pandas DataFrame with a datetime index.")
@@ -566,11 +729,18 @@ class ThresholdVAR:
         self.prior_params = {**TVAR_PRIOR_DEFAULTS, **(prior_params or {})}
         if self.prior_params["sigma_scale"] not in ("sd", "variance"):
             raise ValueError("prior_params['sigma_scale'] must be 'sd' or 'variance'.")
+        if not float(self.prior_params["lamda0P"]) > 0:
+            raise ValueError("prior_params['lamda0P'] must be positive.")
         self.delay = None if delay is None else int(delay)
         self.threshold = None if threshold is None else float(threshold)
 
         self.EX = 1                                   # constant
-        self.k = self.N * lags + self.EX
+        self.b_exo = None if b_exo is None else np.asarray(b_exo, dtype=int)
+        self.n_ext = 0 if b_exo is None else _block_exogeneity(b_exo, self.N)
+        # coefficients per equation of the threshold regressions (the domestic
+        # block under `b_exo`: own lags, constant, external now and lagged)
+        self.k = self.N * lags + self.EX + self.n_ext
+        self.k_ext = self.n_ext * lags + self.EX if self.n_ext else 0
         self.start = _sample_start(lags, training, max_delay)
         self.covid_mode, self.covid_window = covid_mode, covid_window
         self.covid_dates = pd.DatetimeIndex([])
@@ -675,15 +845,63 @@ class ThresholdVAR:
         return scales_from(res.x)
 
     # ------------------------------------------------------------------
-    def _setup(self):
-        """Estimation sample, threshold variable by delay and the dummy prior."""
+    def _blocks(self, y: np.ndarray, x: np.ndarray):
+        """Split system rows into the external and the domestic regressions (``b_exo``).
+
+        External: ``[external lags 1..L, 1]``. Domestic: ``[domestic lags 1..L,
+        1, external now, external lags 1..L]``. Rows may be GLS-weighted; the
+        current external values are then weighted like the rest of the row.
+        """
+        nx, N = self.n_ext, self.N
+        lag = [x[:, (j - 1) * N:j * N] for j in range(1, self.lags + 1)]
+        const = x[:, -1:]
+        xlags = [g[:, :nx] for g in lag]
+        xx = np.hstack(xlags + [const])
+        xd = np.hstack([g[:, nx:] for g in lag] + [const, y[:, :nx]] + xlags)
+        return y[:, :nx], xx, y[:, nx:], xd
+
+    def _block_priors(self, yx: np.ndarray, yd: np.ndarray):
+        """Dummy priors of the external block and of the domestic threshold regressions."""
+        pp, L = self.prior_params, self.lags
+
+        def moments(y):
+            mu, sigma, delta = _ar1_moments(y, pp["RW"])
+            return mu, (sigma ** 2 if pp["sigma_scale"] == "variance" else sigma), delta
+
+        mu, s_x, delta = moments(yx)
+        prior_x = _DummyPrior(*_create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"],
+                                               L, mu, s_x, yx.shape[1]))
+        mu, s_d, delta = moments(yd)
+        ydum, xdum = _create_dummies(pp["lamdaP"], pp["tauP"], delta, pp["epsilonP"], L, mu,
+                                     s_d, yd.shape[1])
+        prior_d = _DummyPrior(*_external_dummies(ydum, xdum, s_x, L, pp["lamdaP"],
+                                                 float(pp["lamda0P"])))
+        return prior_x, prior_d
+
+    def _weighted_rows(self):
         y, x, Fstar = self._rows()
         w = self.weights[:, None]                     # GLS rows: y_t / s_t, x_t / s_t
-        y, x = y * w, x * w
-        prior = self._prior(y)
+        return y * w, x * w, Fstar
+
+    def _setup(self):
+        """Estimation sample, threshold variable by delay and the dummy prior of the
+        threshold regressions (the domestic block under ``b_exo``)."""
+        y, x, Fstar = self._weighted_rows()
+        if self.n_ext:
+            yx, _, y, x = self._blocks(y, x)
+            _, prior = self._block_priors(yx, y)
+        else:
+            prior = self._prior(y)
         tar_mean = (float(Fstar[0].mean()) if self.threshold_prior_mean is None
                     else float(self.threshold_prior_mean))
         return y, x, Fstar, prior, tar_mean
+
+    def _external_setup(self):
+        """``(y_x, x_x, prior_x)`` of the external block (``b_exo`` only)."""
+        y, x, _ = self._weighted_rows()
+        yx, xx, yd, _ = self._blocks(y, x)
+        prior_x, _ = self._block_priors(yx, yd)
+        return yx, xx, prior_x
 
     def model_summary(self):
         """Display a Markdown summary of the specification."""
@@ -737,6 +955,17 @@ class ThresholdVAR:
             stable coefficients in both regimes, and
             ``self.failed_stability_draws`` counts draws that repeated the
             previous one after ``maxdraws`` unstable proposals.
+
+            With ``b_exo`` (``n_x`` external, ``n_d = N - n_x`` domestic
+            variables), ``B1``, ``B2`` are the domestic block's regime
+            coefficients, ``(n, k, n_d)`` with ``k = n_d P + 1 + n_x (P + 1)``
+            and rows ``[domestic lag 1, ..., domestic lag P, constant, external
+            now, external lag 1, ..., external lag P]``, and ``S1``, ``S2``
+            ``(n, n_d, n_d)`` its regime covariances (of the domestic
+            equations, i.e. given the current external values). ``Bx``
+            ``(n, n_x P + 1, n_x)`` with rows ``[external lag 1, ..., external
+            lag P, constant]`` and ``Sx`` ``(n, n_x, n_x)`` are the external
+            block's, common to both regimes.
         """
         y, x, Fstar, prior, tar_mean = self._setup()
         pp = self.prior_params
@@ -746,23 +975,24 @@ class ThresholdVAR:
                  for col in ("delay", "lower", "upper", "probability")}
         split.update(tar_mean=tar_mean, tar_var=pp["tarvariance"], fixed_tar=self.threshold)
         n_keep = self.post_draws - self.burnin
+        ext = self._external_setup() if self.n_ext else None
 
         base = self.seed if self.seed is not None else np.random.SeedSequence().entropy
         seeds = [int((base + i) % (2 ** 32)) for i in range(n_chains)]
         args = (n_keep, split, y, x, Fstar, prior, self.lags, pp["maxdraws"])
         if n_chains == 1:
-            blocks = [_sample_draws(seeds[0], *args, show_progress=show_progress)]
+            blocks = [_sample_draws(seeds[0], *args, show_progress=show_progress, ext=ext)]
         elif _HAS_JOBLIB:
             gen = Parallel(n_jobs=n_jobs, return_as="generator")(
-                delayed(_sample_draws)(s, *args) for s in seeds)
+                delayed(_sample_draws)(s, *args, ext=ext) for s in seeds)
             blocks = list(tqdm(gen, total=n_chains, desc="Sampling Posterior",
                                disable=not show_progress))
         else:  # pragma: no cover
-            blocks = [_sample_draws(s, *args, show_progress=show_progress and i == 0)
+            blocks = [_sample_draws(s, *args, show_progress=show_progress and i == 0, ext=ext)
                       for i, s in enumerate(seeds)]
 
-        pooled = {key: np.concatenate([b[key] for b in blocks])
-                  for key in ("B1", "B2", "S1", "S2", "tar", "delay", "e1")}
+        keys = ("B1", "B2", "S1", "S2", "tar", "delay", "e1") + (("Bx", "Sx") if ext else ())
+        pooled = {key: np.concatenate([b[key] for b in blocks]) for key in keys}
         # histories and forecasts use the unweighted, contiguous sample; `pos` maps
         # the rows of the likelihood (and of `e1`) into it, `kept` flags them
         pooled.update(y=self.data[self.start:], x=x, T=y.shape[0],
@@ -787,17 +1017,35 @@ class ThresholdVAR:
         the stability restriction (the coefficients' prior is not truncated),
         and the dummy prior is scaled with sample moments, as usual for this
         prior.
+
+        With ``b_exo`` the likelihood factors into the external block and the
+        domestic block given the external variables, with independent priors.
+        The Series then holds ``external block`` (the linear BVAR),
+        ``domestic block, TVAR`` and ``domestic block, linear`` (one regime,
+        same regressors and prior), the system totals ``TVAR`` and ``linear
+        VAR`` (external plus domestic: densities of the same data as without
+        ``b_exo``) and the ``log Bayes factor``, which is the domestic
+        difference because the external block cancels.
         """
         if not hasattr(self, "split_posterior"):
             raise RuntimeError("Call sample_posterior() first.")
         y, x, _, prior, _ = self._setup()
         sp = self.split_posterior
-        jacobian = self.N * float(np.log(self.weights).sum())     # scaled rows: y_t = s_t y~_t
+        log_w = float(np.log(self.weights).sum())                # scaled rows: y_t = s_t y~_t
+        jacobian = y.shape[1] * log_w
         tvar = float(logsumexp(sp["log_prior_mass"] + sp["log_ml"])
                      - logsumexp(sp["log_prior_mass"])) + jacobian
         linear = float(prior.log_ml(x.T @ x, x.T @ y, y.T @ y, y.shape[0])) + jacobian
-        return pd.Series({"TVAR": tvar, "linear VAR": linear,
-                          "log Bayes factor": tvar - linear}, name="log marginal likelihood")
+        if not self.n_ext:
+            return pd.Series({"TVAR": tvar, "linear VAR": linear,
+                              "log Bayes factor": tvar - linear}, name="log marginal likelihood")
+        yx, xx, prior_x = self._external_setup()
+        ext = float(prior_x.log_ml(xx.T @ xx, xx.T @ yx, yx.T @ yx, yx.shape[0])) \
+            + yx.shape[1] * log_w
+        return pd.Series({"external block": ext, "domestic block, TVAR": tvar,
+                          "domestic block, linear": linear, "TVAR": ext + tvar,
+                          "linear VAR": ext + linear, "log Bayes factor": tvar - linear},
+                         name="log marginal likelihood")
 
     def _require_draws(self):
         if self.draws is None:
@@ -834,6 +1082,12 @@ class ThresholdVAR:
         which also moves with the volatility factor, so the two can be
         compared directly (:func:`MacroPy.plot_volatility_comparison`).
 
+        With ``b_exo`` each block reports its own shocks: the external ones,
+        ``sqrt(diag Sx)``, do not move (that block has no regimes), and the
+        domestic ones are those of the domestic equations, which condition on
+        the current external values and are therefore smaller than the
+        reduced-form innovations of the joint system.
+
         Returns
         -------
         pd.DataFrame
@@ -844,6 +1098,9 @@ class ThresholdVAR:
         sd1 = np.sqrt(np.diagonal(d["S1"], axis1=1, axis2=2))[:, None, :]
         sd2 = np.sqrt(np.diagonal(d["S2"], axis1=1, axis2=2))[:, None, :]
         sd = np.where(d["e1"][:, :, None], sd1, sd2)               # (n, T, N)
+        if self.n_ext:
+            sdx = np.sqrt(np.diagonal(d["Sx"], axis1=1, axis2=2))[:, None, :]
+            sd = np.concatenate([np.broadcast_to(sdx, sd.shape[:2] + (self.n_ext,)), sd], axis=2)
         return _band_frame(sd, self.names, self.sample_dates, cred)
 
     # ------------------------------------------------------------------
@@ -879,9 +1136,12 @@ class ThresholdVAR:
 
     def _draw_dict(self, i: int) -> dict:
         d = self.draws
-        return dict(B1=d["B1"][i], B2=d["B2"][i], S1=d["S1"][i], S2=d["S2"][i],
-                    tar=d["tar"][i], delay=d["delay"][i], e1=d["e1"][i], y=d["y"],
-                    pos=d["pos"], kept=d["kept"])
+        out = dict(B1=d["B1"][i], B2=d["B2"][i], S1=d["S1"][i], S2=d["S2"][i],
+                   tar=d["tar"][i], delay=d["delay"][i], e1=d["e1"][i], y=d["y"],
+                   pos=d["pos"], kept=d["kept"])
+        if self.n_ext:
+            out.update(Bx=d["Bx"][i], Sx=d["Sx"][i])
+        return out
 
     def compute_irfs(self, shock: Union[str, List[str]] = "level", reps: int = 25,
                      n_draws: Optional[int] = 200, scale: float = 1.0, n_jobs: int = -1,
@@ -893,7 +1153,12 @@ class ThresholdVAR:
         shocked minus a baseline simulation, averaged over the sample histories
         in each regime. Shocks are recursive (Cholesky, in column order) and
         regime specific: the impact uses the Cholesky factor of the regime the
-        path is in.
+        path is in. With ``b_exo``, an external shock uses the external
+        block's Cholesky factor (it has no regimes) and reaches the domestic
+        variables on impact through the regime's contemporaneous
+        coefficients; a domestic shock uses the regime's factor. Future
+        innovations of both blocks are common across scenarios and the paths
+        still switch regime along the horizon; the output layout is the same.
 
         Parameters
         ----------

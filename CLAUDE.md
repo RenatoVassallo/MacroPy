@@ -34,8 +34,16 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   `log_predictive_score` (simulated paths, Gaussian last step);
   `recursive_log_scores` / `compare_log_scores` (Amisano-Giacomini) /
   `plot_log_scores` for out-of-sample comparisons. Threshold models start the
-  sample at `max(lags + training, max_delay)`. Tutorial:
-  `tutorial_thresholdvar.ipynb` (about 3 min to run).
+  sample at `max(lags + training, max_delay)`. `b_exo=` (BayesianVAR's mask
+  convention) is a hard block structure, since the dummy prior is Kronecker:
+  only block-recursive masks (external variables first, excluding every other
+  variable) are accepted; the external block is a linear BVAR without regimes
+  (`draws["Bx"]`, `["Sx"]`), the domestic block a threshold regression on
+  `[domestic lags, 1, external now, external lags]` (`lamda0P` for the
+  contemporaneous terms), and the split posterior uses the domestic block.
+  Reference: `scripts/block_tvar_reference.py` (matched draw for draw; its test
+  needs research/tvar_external_shocks or `TVAR_SHOCKS_ROOT`, else it skips).
+  Tutorial: `tutorial_thresholdvar.ipynb` (about 3 min to run).
 - `src/MacroPy/tvpvar.py` — `TimeVaryingVAR`: Chan & Eisenstat (2018) TVP-VARs
   with SV (`model=` C, C-SV, TVP, TVP-SV, TVP-R1/R2/R3-SV). Banded precision
   sampler (block-tridiagonal state precision in LAPACK band storage), KSC
@@ -117,7 +125,8 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
 
 ## Testing / release
 
-- `pytest tests/` (about 12 s). Dev deps in `[dependency-groups] dev`.
+- `pytest tests/` (about 15 s; 40 s when the block-TVAR reference test finds
+  its data). Dev deps in `[dependency-groups] dev`.
 - Release: bump `pyproject.toml` + `uv.lock` version, move CHANGELOG
   `[Unreleased]` to the version, `python -m build`, tag matching the README
   wheel URL (`releases/download/<ver>/macropy-<ver>-py3-none-any.whl`).

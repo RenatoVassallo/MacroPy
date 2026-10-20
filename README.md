@@ -23,7 +23,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 ✅ Structural impulse response functions and Forecast Error Variance Decomposition  
 ✅ Unconditional and conditional forecasts  
 ✅ Smooth Local Projections (Barnichon & Brownlees, 2019)  
-✅ Threshold VARs with regime-specific covariances (exact posterior) or with stochastic volatility and uncertainty shocks, compared side by side and by out-of-sample log scores (Alessandri & Mumtaz, 2017, 2019)  
+✅ Threshold VARs with regime-specific covariances (exact posterior, optional block exogeneity for a linear external block) or with stochastic volatility and uncertainty shocks, compared side by side and by out-of-sample log scores (Alessandri & Mumtaz, 2017, 2019)  
 ✅ Time-varying parameter VARs with stochastic volatility, compared by marginal likelihood and DIC (Chan & Eisenstat, 2018)  
 ✅ Trend-cycle decomposition: HP filter, Clark UC by MLE, and Bayesian UC with COVID variance scales (Grant & Chan, 2017; Lenza & Primiceri, 2022)  
 ✅ Publication-ready matplotlib figures in one consistent MacroPy style, for notebooks, papers and slides  
@@ -48,7 +48,7 @@ Whether you’re forecasting GDP or tracing the effects of policy shocks, `Macro
 You can install the latest pre-release directly from GitHub:
 
 ```bash
-pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.3.2/macropy-0.3.2-py3-none-any.whl
+pip install https://github.com/RenatoVassallo/MacroPy/releases/download/0.3.3/macropy-0.3.3-py3-none-any.whl
 ```
 
 > 🆕 **New to Python?** Follow this practical guide to set up Python and VS Code before you start:
@@ -96,5 +96,5 @@ Explore full examples in the [tutorials/](https://github.com/RenatoVassallo/Macr
 
 If you use **MacroPy** in academic work, please cite:
 
-> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.2.  
+> Vassallo, R. (2026). *MacroPy: A Toolbox for Macroeconometric Analysis in Python*, Version 0.3.3.  
 > [GitHub Repository](https://github.com/RenatoVassallo/MacroPy)

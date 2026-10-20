@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `ThresholdVAR(b_exo=...)`: block exogeneity with the mask convention of
+  `BayesianVAR` (`b_exo[i, j] = 1` excludes variable `j` from equation `i`).
+  The dummy prior is Kronecker, so the restriction is a hard block structure
+  and the mask must be block recursive (the first `n_x` variables exclude every
+  other variable and none of their own; anything else raises). The external
+  block is a linear BVAR with its own prior, posterior and stability check and
+  no regimes; the domestic block keeps the threshold structure on its own lags,
+  the constant and the current and lagged external variables, with regressors
+  `[domestic lags, constant, external now, external lags]`. The split posterior
+  uses the domestic block only. `draws` gains `Bx`, `Sx`;
+  `log_marginal_likelihood` returns the external block, the domestic block
+  under the TVAR and the linear model, the system totals and the log Bayes
+  factor (the domestic difference); GIRFs propagate external shocks through the
+  regime's contemporaneous coefficients; `residual_volatility` reports each
+  block's shocks; the summary shows the blocks. Both COVID modes, `delay=`,
+  `threshold=`, `training`, `histories=` and the log scores work with it.
+  Validated draw for draw against `scripts/block_tvar_reference.py`.
+  `ThresholdVARSV` does not take `b_exo`.
+- `TVAR_PRIOR_DEFAULTS["lamda0P"]` (default 1.0): prior tightness of the
+  contemporaneous external coefficients in the domestic block; external lags
+  use `lamdaP` with the Minnesota cross-variable scaling.
+
 ## [0.3.2] - 2026-10-18
 
 ### Added
