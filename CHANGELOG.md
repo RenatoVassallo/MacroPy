@@ -28,8 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `TVAR_PRIOR_DEFAULTS["lamda0P"]` (default 1.0): prior tightness of the
   contemporaneous external coefficients in the domestic block; external lags
   use `lamdaP` with the Minnesota cross-variable scaling.
+- `TimeVaryingVAR(b_exo=...)`: block exogeneity with the `BayesianVAR` mask
+  (`b_exo[i, j] = 1` excludes the lags of `j` from equation `i`). Excluded
+  coefficients are fixed at zero, dropped from both the drifting and the
+  constant blocks, in every specification; the marginal likelihood and the DIC
+  follow, so the restriction can be tested by a Bayes factor. With the external
+  variables ordered first and a block-recursive mask, domestic shocks have no
+  effect on the external block at any horizon (the recursive `A_t` already
+  excludes them on impact). Any 0/1 mask is accepted.
 
 ### Fixed
+- `TimeVaryingVAR` marginal likelihood and DIC: the Newton search for the mode
+  of the log-volatilities (C-SV directly, the SV models with drifting
+  coefficients inside the EM) took full steps, as the authors' code does, and
+  cycled when an equation's squared residuals span many orders of magnitude (a
+  policy rate that moves by points in the 1990s and not at all for quarters
+  later). The fallback was the flat starting path, so the inner importance
+  sampler returned log-likelihoods thousands of points too low: on Peruvian
+  quarterly data 1994-2026 the search failed in about a third of the C-SV
+  draws and the DIC came out as 6390 with pD 1881. The search now halves the
+  step until the (strictly concave) objective rises and keeps the best
+  iterate; when full steps are accepted the iterates are the authors'.
 - `TimeVaryingVAR.compute_fevd` with `irf_1std=0` decomposed the unit-shock
   responses `Psi_h A_t^{-1}` instead of `Psi_h A_t^{-1} Sigma_t^{1/2}` and
   returned wrong shares (still summing to 100) without warning. The FEVD now

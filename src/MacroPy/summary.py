@@ -457,6 +457,10 @@ def generate_tvpvar_summary(settings):
     vol_line = (f"random-walk log-volatilities, IG prior mean {pp['vol_var']:g} "
                 f"(df {pp['vol_df']:g})" if settings.sv
                 else f"constant, IG prior mean {pp['sigma_var']:g} (df {pp['sigma_df']:g})")
+    exo = getattr(settings, "b_exo", None)
+    exo_line = ("" if exo is None else
+                f"\n- **Block Exogeneity**: {len(settings._restricted)} lag coefficients "
+                f"fixed at zero (`b_exo`)")
 
     summary = f"""
 **MacroPy: A Toolbox for Bayesian Macroeconometric Analysis in Python**
@@ -471,7 +475,7 @@ Version {__version__}
 - **Number of Lags (p)**: {settings.lags}
 - **Sample Period**: {sample_start} to {sample_end} ({settings.T} observations, {settings.presample} presample)
 - **Time-varying States per Period**: {settings.ks}
-- **Constant Coefficients**: {settings.kc}
+- **Constant Coefficients**: {settings.kc}{exo_line}
 
 ---
 

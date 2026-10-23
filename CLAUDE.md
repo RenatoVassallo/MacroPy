@@ -51,7 +51,10 @@ Bayesian macroeconometrics toolbox (src layout, `src/MacroPy/`). Python >=3.11,<
   thinned). IRFs/FEVD/HD date by date with recursive `A_t^{-1} Sigma_t^{1/2}`;
   optional `log_marginal_likelihood` / `dic` on the integrated likelihood
   (validated against the authors' MATLAB, Kalman and particle filters). The
-  TVP posterior can be multimodal: compare seeds. Plots in `plots_tvpvar.py`
+  TVP posterior can be multimodal: compare seeds. `b_exo=` fixes excluded lag
+  coefficients at zero (any 0/1 mask, BayesianVAR convention). The log-vol mode
+  search uses damped Newton (full steps cycle on rates with near-zero residuals).
+  Plots in `plots_tvpvar.py`
   (volatility, IRF and FEVD panels on a balanced grid, `_plotting._grid_cols`;
   FEVD plots default to 20 steps).
 - `src/MacroPy/uc.py` — `UCTrendCycle`: UC trend-cycle ladder (HP filter via

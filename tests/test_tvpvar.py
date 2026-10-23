@@ -273,3 +273,67 @@ def test_fevd_is_scale_invariant_but_unit_irfs_scale():
         th = m._irf_at(t, 1, one_sd=False)[:, 0]
         return (100.0 * th ** 2 / (th ** 2).sum(axis=2, keepdims=True)).mean(axis=0)
     assert np.abs(unit_shares(fits[0], 40) - unit_shares(fits[1], 40)).max() > 10
+
+
+@pytest.mark.parametrize("model", ["C-SV", "TVP-SV", "TVP-R2-SV"])
+def test_block_exogeneity_shuts_domestic_feedback(model):
+    """With ``b_exo[0, 1:] = 1`` and ``a`` ordered first, shocks to ``b`` and ``c``
+    never move ``a``: the excluded lags are exact zeros in every draw and date."""
+    mask = np.zeros((3, 3), dtype=int)
+    mask[0, 1:] = 1
+    free = TimeVaryingVAR(_data(), model=model, lags=2, progress=False)
+    m = TimeVaryingVAR(_data(), model=model, lags=2, post_draws=200, burnin=0.5, seed=4,
+                       progress=False, b_exo=mask)
+    assert m.ks + m.kc == free.ks + free.kc - 4                # 2 variables x 2 lags
+    m.sample_posterior()
+    lags = m.coefficient_frame("lags")
+    for v in ("b", "c"):
+        for lag in (1, 2):
+            assert np.all(lags[(f"a<-{v}(-{lag})", "median")] == 0.0)
+    irf = m.compute_irfs(hor=8, dates=[m.yy_dates[-1]])
+    np.testing.assert_array_equal(irf["median"][:, :, 0, 1:], 0.0)
+    assert np.all(list(irf["draws"].values())[0][:, :, 0, 1:] == 0.0)
+    assert np.abs(irf["median"][:, 1:, 1:, 0]).max() > 0       # a still moves b and c
+    hd = m.compute_hd()
+    np.testing.assert_allclose(hd["shock"][:, 1:, 0], 0.0, atol=1e-12)
+    np.testing.assert_allclose(hd["baseline"] + hd["shock"].sum(axis=1), m.yy, atol=1e-10)
+    fc = m.forecast(fhor=3)["forecast_draws"]
+    assert np.isfinite(fc).all()
+
+
+def test_block_exogeneity_validation_and_likelihood():
+    with pytest.raises(ValueError):
+        TimeVaryingVAR(_data(), b_exo=np.ones((2, 2)))
+    with pytest.raises(ValueError):
+        TimeVaryingVAR(_data(), b_exo=np.full((3, 3), 2))
+    mask = np.zeros((3, 3), dtype=int)
+    mask[0, 1:] = 1
+    m = TimeVaryingVAR(_data(), model="C", lags=1, post_draws=300, burnin=0.5, seed=2,
+                       progress=False, b_exo=mask)
+    m.sample_posterior()
+    # equation a keeps only its intercept and its own lag
+    assert m.Z.shape[2] == 3 * 4 + 3 - 2
+    assert np.count_nonzero(np.any(m.Z[:, 0, :] != 0, axis=0)) == 2
+    ml = m.log_marginal_likelihood(n_draws=200, n_batches=10)
+    assert np.isfinite(ml["logml"])
+
+
+@pytest.mark.parametrize("sig2h,h0", [(0.5, 3.0), (1.0, 5.0), (0.5, 0.0)])
+def test_logvol_mode_converges_with_wide_residual_range(sig2h, h0):
+    """A turbulent start and then a rate that barely moves (squared residuals
+    from 1e-13 to 500): full Newton steps cycle; the damped search converges to
+    the stationary point."""
+    T = 120
+    rng = np.random.default_rng(0)
+    z = rng.standard_normal((T, 1)) ** 2
+    z[:20] *= 100.0
+    z[20:] *= 1e-3 * rng.random((T - 20, 1)) ** 4
+    s2, m0 = np.array([sig2h]), np.array([h0])
+    h, ok = tv._newton_logvol(z, s2, m0, np.full((T, 1), h0), 1e-8, 500)
+    assert ok
+    grad = -tv._rw_grad(h, m0, s2) - 0.5 * (1.0 - np.exp(-h) * z)
+    assert np.abs(grad).max() < 1e-8
+    # on well-behaved data the full step is always accepted (the authors' iterates)
+    clean = rng.standard_normal((T, 1)) ** 2
+    hc, okc = tv._newton_logvol(clean, s2, m0, np.full((T, 1), h0), 0.01, 100)
+    assert okc and np.all(np.isfinite(hc))

@@ -348,29 +348,56 @@ def _adaptive_is(draw_fn, R, adaptive, max_draws):
     return _logmeanexp(ll)
 
 
+def _logvol_objective(h, z, sig2h, h0):
+    """``-1/2 sum h - 1/2 sum exp(-h) z + log p(h)`` up to a constant, per series."""
+    d = np.diff(h, axis=0, prepend=h0[None, :])
+    return (-0.5 * h.sum(axis=0) - 0.5 * np.sum(np.exp(-h) * z, axis=0)
+            - 0.5 * np.sum(d * d, axis=0) / sig2h)
+
+
 def _newton_logvol(z, sig2h, h0, start, tol, max_iter):
     """Mode of ``-1/2 sum h - 1/2 sum exp(-h) z + log p(h)`` (random-walk prior),
-    one tridiagonal Newton system per series. Returns ``(mode, converged)``."""
+    one tridiagonal Newton system per series. Returns ``(mode, converged)``.
+
+    The objective is strictly concave, so a backtracking line search (step
+    halving, series by series, until the objective rises) makes Newton converge
+    from any start. Without it, the full steps of the authors' code overshoot
+    when a few squared residuals are orders of magnitude above the rest (the
+    2020 pandemic quarters) and the search fails in a large share of draws. When
+    the full step is accepted, as in well-behaved samples, the iterates are the
+    authors'. On failure the best iterate is returned, never a worse point."""
     h = start.copy()
     n = h.shape[1]
     with np.errstate(over="ignore", invalid="ignore"):
+        f = _logvol_objective(h, z, sig2h, h0)
         for _ in range(max_iter):
             ez = np.exp(-h) * z
             g = -_rw_grad(h, h0, sig2h) - 0.5 * (1.0 - ez)
             if not (np.all(np.isfinite(ez)) and np.all(np.isfinite(g))):
-                return start, False
-            new = np.empty_like(h)
+                return h, False
+            step = np.empty_like(h)
             for i in range(n):
                 try:
                     U = _chol_band(_tri_band(sig2h[i], 0.5 * ez[:, i]))
                 except np.linalg.LinAlgError:
-                    return start, False
-                step, _ = dpbtrs(U, g[:, i:i + 1])
-                new[:, i] = h[:, i] + step.ravel()
-            err = float(np.max(np.abs(new - h)))
-            h = new
-            if err < tol:
-                return h, True
+                    return h, False
+                s, _ = dpbtrs(U, g[:, i:i + 1])
+                step[:, i] = s.ravel()
+            if float(np.max(np.abs(step))) < tol:
+                return h + step, True
+            t = np.ones(n)
+            new = h + step
+            fn = _logvol_objective(new, z, sig2h, h0)
+            for _ in range(60):
+                bad = ~(fn >= f)                            # also catches nan
+                if not bad.any():
+                    break
+                t[bad] *= 0.5
+                new = h + step * t
+                fn = _logvol_objective(new, z, sig2h, h0)
+            else:
+                return h, False
+            h, f = new, fn
     return h, False
 
 
@@ -379,9 +406,7 @@ def _ll_csv(e2, sig2h, h0, rng, R=10, adaptive=True, max_draws=1000):
     around the mode of ``p(h | y, coefficients)`` (``intlike_varsv.m``)."""
     T, n = e2.shape
     start = np.tile(h0, (T, 1))
-    ht, ok = _newton_logvol(e2, sig2h, h0, start, 0.01, 100)
-    if not ok:
-        ht = start
+    ht, _ = _newton_logvol(e2, sig2h, h0, start, 0.01, 100)   # best iterate if not converged
     ez = np.exp(-ht) * e2
     Us = [_chol_band(_tri_band(sig2h[i], 0.5 * ez[:, i])) for i in range(n)]
     half_logdet = float(sum(np.sum(np.log(U[1])) for U in Us))
@@ -429,24 +454,20 @@ def _ll_tvpsv(ytil, X, sig2, sig2h, h0, theta0, band, rng, R=10,
         zhat = np.einsum("tik,tkl,til->ti", X, blocks, X) + resid * resid
         return G, zhat
 
-    start = np.tile(h0, (T, 1))
-    ht = start
-    converged = False
+    # EM for the mode; every M-step raises its objective (damped Newton), so the
+    # last iterate whose E-step worked is kept even without convergence
+    ht = prev = np.tile(h0, (T, 1))
     for _ in range(100):
         try:
             _, zhat = e_step(ht)
         except np.linalg.LinAlgError:
+            ht = prev
             break
-        new, ok = _newton_logvol(zhat, sig2h, h0, ht, 0.1, 1000)
-        if not ok:
-            continue
+        new, _ = _newton_logvol(zhat, sig2h, h0, ht, 0.1, 1000)
         err = float(np.max(np.abs(new - ht)))
-        ht = new
+        prev, ht = ht, new
         if err < 0.1:
-            converged = True
             break
-    if not converged:
-        ht = start
     G, zhat = e_step(ht)                                # Hessian at the final mode
 
     # Negative Hessian of log p(h | y): random-walk prior and expected
@@ -630,6 +651,15 @@ class TimeVaryingVAR:
         likelihood, DIC) draws from its own generator.
     progress : bool, default True
         Show progress bars and the cost notices of the expensive methods.
+    b_exo : np.ndarray, optional
+        Block exogeneity mask (``n x n`` array of 0/1, the convention of
+        ``BayesianVAR``): ``b_exo[i, j] = 1`` excludes the lags of variable
+        ``j`` from equation ``i``. Excluded coefficients are fixed at zero
+        (dropped from the drifting and the constant blocks), not shrunk by a
+        tight prior. Contemporaneous exclusions come from the recursive
+        ordering: with the external variables ordered first and a block-
+        recursive mask (e.g. ``b_exo[:4, 4:] = 1``), domestic shocks have no
+        effect on the external block at any horizon, in every date and model.
 
     Examples
     --------
@@ -655,6 +685,7 @@ class TimeVaryingVAR:
         irf_1std: int = 1,
         seed: Optional[int] = None,
         progress: bool = True,
+        b_exo: Optional[np.ndarray] = None,
     ):
         if not isinstance(y, pd.DataFrame):
             raise ValueError("`y` must be a pandas DataFrame with a datetime index.")
@@ -726,8 +757,22 @@ class TimeVaryingVAR:
         state_idx = {None: np.array([], dtype=int), "all": np.arange(kf),
                      "impact": kb + np.arange(m), "coef": np.arange(kb),
                      "intercept": intercept}[self.drift]
+        # block exogeneity: lag j of variable v in equation i sits at
+        # i (1 + n p) + 1 + (j - 1) n + v; those coefficients are fixed at zero
+        self.b_exo = None
+        restricted = np.array([], dtype=int)
+        if b_exo is not None:
+            mask = np.asarray(b_exo)
+            if mask.shape != (n, n) or not np.isin(mask, (0, 1)).all():
+                raise ValueError(f"`b_exo` must be an {n} x {n} array of 0/1.")
+            self.b_exo = mask.astype(int)
+            eq, var = np.nonzero(self.b_exo)
+            restricted = np.sort(np.concatenate(
+                [eq * (1 + n * p) + 1 + j * n + var for j in range(p)]))
+        self._restricted = restricted
+        state_idx = np.setdiff1d(state_idx, restricted)
         self.state_idx = state_idx
-        self.const_idx = np.setdiff1d(np.arange(kf), state_idx)
+        self.const_idx = np.setdiff1d(np.arange(kf), np.union1d(state_idx, restricted))
         self.ks, self.kc = state_idx.shape[0], self.const_idx.shape[0]
         self.X = np.ascontiguousarray(Xf[:, :, state_idx])
         self.Z = np.ascontiguousarray(Xf[:, :, self.const_idx])
@@ -957,7 +1002,7 @@ class TimeVaryingVAR:
     def _coef_at(self, t: int):
         """``(A, B, logvar)`` of every stored draw at date ``t``."""
         ns = self.draws["save_idx"].shape[0]
-        coef = np.empty((ns, self.kf))
+        coef = np.zeros((ns, self.kf))                      # zeros where b_exo excludes
         if self.ks:
             coef[:, self.state_idx] = self.draws["states"][:, t, :]
         if self.kc:
@@ -1207,7 +1252,7 @@ class TimeVaryingVAR:
             logvar = np.log(rep(self._saved("sig2")))
         hist = np.tile(self.yy[::-1][:p][None], (ns, 1, 1))  # (ns, p, n), latest first
         out = np.empty((ns, fhor, n))
-        coef = np.empty((ns, self.kf))
+        coef = np.zeros((ns, self.kf))
         if self.kc:
             coef[:, self.const_idx] = const
         for h in range(fhor):
@@ -1305,10 +1350,13 @@ class TimeVaryingVAR:
         const = self._saved("const") if self.kc else None
         for c, k in enumerate(pos):
             hit = np.flatnonzero(self.state_idx == k)
+            fixed = np.flatnonzero(self.const_idx == k)
             if hit.size:
                 paths[:, :, c] = self.draws["states"][:, :, hit[0]]
-            else:
-                paths[:, :, c] = const[:, np.flatnonzero(self.const_idx == k)[0], None]
+            elif fixed.size:
+                paths[:, :, c] = const[:, fixed[0], None]
+            else:                                           # excluded by b_exo
+                paths[:, :, c] = 0.0
         lo = 50 - 50 * cred
         q = np.percentile(paths, [50, lo, 100 - lo], axis=0)
         cols = pd.MultiIndex.from_product([labels, ["median", "lower", "upper"]])
