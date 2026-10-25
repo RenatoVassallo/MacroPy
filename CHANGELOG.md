@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-23
+
 ### Added
 - `ThresholdVAR(b_exo=...)`: block exogeneity with the mask convention of
   `BayesianVAR` (`b_exo[i, j] = 1` excludes variable `j` from equation `i`).
